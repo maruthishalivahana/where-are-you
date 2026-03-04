@@ -4,7 +4,12 @@ import { requireRole } from '../../middleware/role.middleware';
 import { validate } from '../../middleware/validate.middleware';
 import { ROLES } from '../../constants/roles';
 import { authController } from './auth.controller';
-import { refreshTokenController, logoutController } from './auth.token.controller';
+import {
+	refreshTokenController,
+	logoutController,
+	logoutUserController,
+	logoutDriverController,
+} from './auth.token.controller';
 import { authDebugController } from './auth.debug.controller';
 import { signupAdminSchema, loginAdminSchema, loginMemberSchema, createMemberSchema } from './auth.validation';
 
@@ -17,6 +22,8 @@ authRouter.post('/member/login', validate(loginMemberSchema), authController.log
 // Token management
 authRouter.post('/refresh', refreshTokenController);
 authRouter.post('/logout', logoutController);
+authRouter.post('/logout/user', requireAuth, requireRole(ROLES.USER), logoutUserController);
+authRouter.post('/logout/driver', requireAuth, requireRole(ROLES.DRIVER), logoutDriverController);
 
 // Debug route - check your token
 authRouter.get('/whoami', requireAuth, authDebugController.whoami);

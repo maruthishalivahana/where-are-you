@@ -111,6 +111,76 @@ export const driverService = {
         };
     },
 
+    startMyTracking: async (driverId: string, organizationId: string) => {
+        const driver = await Driver.findOne({ _id: driverId, organizationId });
+
+        if (!driver) {
+            throw new Error('Driver not found');
+        }
+
+        if (!driver.assignedBusId) {
+            throw new Error('No bus assigned to this driver');
+        }
+
+        const bus = await Bus.findOne({ _id: driver.assignedBusId, organizationId });
+
+        if (!bus) {
+            throw new Error('Assigned bus not found');
+        }
+
+        driver.isTracking = true;
+        await driver.save();
+
+        bus.trackingStatus = 'running';
+        bus.lastUpdated = new Date();
+        await bus.save();
+
+        return {
+            tracking: {
+                driverId: String(driver._id),
+                busId: String(bus._id),
+                isTracking: driver.isTracking,
+                trackingStatus: bus.trackingStatus,
+                startedAt: bus.lastUpdated,
+            },
+        };
+    },
+
+    stopMyTracking: async (driverId: string, organizationId: string) => {
+        const driver = await Driver.findOne({ _id: driverId, organizationId });
+
+        if (!driver) {
+            throw new Error('Driver not found');
+        }
+
+        if (!driver.assignedBusId) {
+            throw new Error('No bus assigned to this driver');
+        }
+
+        const bus = await Bus.findOne({ _id: driver.assignedBusId, organizationId });
+
+        if (!bus) {
+            throw new Error('Assigned bus not found');
+        }
+
+        driver.isTracking = false;
+        await driver.save();
+
+        bus.trackingStatus = 'stopped';
+        bus.lastUpdated = new Date();
+        await bus.save();
+
+        return {
+            tracking: {
+                driverId: String(driver._id),
+                busId: String(bus._id),
+                isTracking: driver.isTracking,
+                trackingStatus: bus.trackingStatus,
+                stoppedAt: bus.lastUpdated,
+            },
+        };
+    },
+
     updateAssignedBus: async (driverId: string, busId: string | null) => {
         const driver = await Driver.findByIdAndUpdate(
             driverId,

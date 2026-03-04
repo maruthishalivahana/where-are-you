@@ -76,4 +76,48 @@ export const driverController = {
             res.status(statusCode).json({ message });
         }
     },
+
+    startTracking: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.sub || !req.user.organizationId) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const result = await driverService.startMyTracking(req.user.sub, req.user.organizationId);
+            res.status(200).json(result);
+        } catch (error) {
+            const message = getMessage(error);
+            const statusCode =
+                message === 'Driver not found' ||
+                message === 'No bus assigned to this driver' ||
+                message === 'Assigned bus not found'
+                    ? 404
+                    : 400;
+
+            res.status(statusCode).json({ message });
+        }
+    },
+
+    stopTracking: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.sub || !req.user.organizationId) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const result = await driverService.stopMyTracking(req.user.sub, req.user.organizationId);
+            res.status(200).json(result);
+        } catch (error) {
+            const message = getMessage(error);
+            const statusCode =
+                message === 'Driver not found' ||
+                message === 'No bus assigned to this driver' ||
+                message === 'Assigned bus not found'
+                    ? 404
+                    : 400;
+
+            res.status(statusCode).json({ message });
+        }
+    },
 };

@@ -2,6 +2,9 @@ import { Request, Response } from 'express';
 import { verifyRefreshToken } from '../../utils/generateTokens';
 import { generateTokens } from '../../utils/generateTokens';
 import { setAuthCookies, clearAuthCookies } from '../../utils/cookies';
+import { User } from '../user/user.model';
+import { Driver } from '../driver/driver.model';
+import { Bus } from '../bus/bus.model';
 
 export const refreshTokenController = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -38,4 +41,46 @@ export const refreshTokenController = async (req: Request, res: Response): Promi
 export const logoutController = async (req: Request, res: Response): Promise<void> => {
     clearAuthCookies(res);
     res.status(200).json({ message: 'Logged out successfully' });
+};
+
+export const logoutUserController = async (req: Request, res: Response): Promise<void> => {
+    try {
+        if (req.user?.sub && req.user.organizationId) {
+            await User.findOneAndUpdate(
+                { _id: req.user.sub, organizationId: req.user.organizationId },
+                { fcmToken: '' }
+            );
+        }
+
+        clearAuthCookies(res);
+        res.status(200).json({ message: 'User logged out successfully' });
+    } catch (error) {
+        clearAuthCookies(res);
+        res.status(200).json({ message: 'User logged out successfully' });
+    }
+};
+
+export const logoutDriverController = async (req: Request, res: Response): Promise<void> => {
+    try {
+        if (req.user?.sub && req.user.organizationId) {
+            const driver = await Driver.findOneAndUpdate(
+                { _id: req.user.sub, organizationId: req.user.organizationId },
+                { isTracking: false },
+                { new: true }
+            );
+
+            if (driver?.assignedBusId) {
+                await Bus.findOneAndUpdate(
+                    { _id: driver.assignedBusId, organizationId: req.user.organizationId },
+                    { trackingStatus: 'stopped', lastUpdated: new Date() }
+                );
+            }
+        }
+
+        clearAuthCookies(res);
+        res.status(200).json({ message: 'Driver logged out successfully' });
+    } catch (error) {
+        clearAuthCookies(res);
+        res.status(200).json({ message: 'Driver logged out successfully' });
+    }
 };
