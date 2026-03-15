@@ -7,7 +7,13 @@ export interface IRoute extends Document {
     startLng: number;
     endLat: number;
     endLng: number;
+    version: number;
+    polyline: string;
     encodedPolyline: string;
+    polylineStopsHash: string;
+    polylineGeneratedAt?: Date;
+    polylineVersion: number;
+    polylineRouteSignature: string;
     totalDistanceMeters: number;
     estimatedDurationSeconds: number;
     isActive: boolean;
@@ -23,7 +29,13 @@ const RouteSchema = new Schema<IRoute>(
         startLng: { type: Number, required: true },
         endLat: { type: Number, required: true },
         endLng: { type: Number, required: true },
-        encodedPolyline: { type: String, required: true },
+        version: { type: Number, default: 1 },
+        polyline: { type: String, default: '' },
+        encodedPolyline: { type: String, default: '' },
+        polylineStopsHash: { type: String, default: '' },
+        polylineGeneratedAt: { type: Date },
+        polylineVersion: { type: Number, default: 0 },
+        polylineRouteSignature: { type: String, default: '' },
         totalDistanceMeters: { type: Number },
         estimatedDurationSeconds: { type: Number },
         isActive: { type: Boolean, default: true },

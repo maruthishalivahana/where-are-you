@@ -1,5 +1,6 @@
 import { Stop } from './stop.model';
 import { Route } from '../route/route.model';
+import { routeService } from '../route/route.service';
 
 interface CreateStopInput {
     name: string;
@@ -61,6 +62,8 @@ export const stopService = {
             radiusMeters: input.radiusMeters ?? 100,
         });
 
+        await routeService.markRoutePolylineDirty(organizationId, routeId, 'stop_created');
+
         return formatStop(stop);
     },
 
@@ -74,6 +77,11 @@ export const stopService = {
     updateStop: async (organizationId: string, stopId: string, input: UpdateStopInput) => {
         const stop = await Stop.findOne({ _id: stopId, organizationId });
         if (!stop) throw new Error('Stop not found');
+
+        const shouldRecalculateRoute =
+            input.latitude !== undefined ||
+            input.longitude !== undefined ||
+            input.sequenceOrder !== undefined;
 
         if (input.latitude !== undefined || input.longitude !== undefined) {
             validateCoords(
@@ -95,12 +103,28 @@ export const stopService = {
         }
 
         const updated = await Stop.findByIdAndUpdate(stopId, { $set: input }, { new: true });
+
+        if (shouldRecalculateRoute) {
+            await routeService.markRoutePolylineDirty(
+                organizationId,
+                String(stop.routeId),
+                'stop_updated_or_reordered'
+            );
+        }
+
         return formatStop(updated!);
     },
 
     deleteStop: async (organizationId: string, stopId: string) => {
         const stop = await Stop.findOneAndDelete({ _id: stopId, organizationId });
         if (!stop) throw new Error('Stop not found');
+
+        await routeService.markRoutePolylineDirty(
+            organizationId,
+            String(stop.routeId),
+            'stop_deleted'
+        );
+
         return { message: 'Stop deleted successfully' };
     },
 };

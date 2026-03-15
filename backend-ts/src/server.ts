@@ -14,6 +14,7 @@ import { userAppRouter } from './modules/user/user.app.routes';
 import { trackingRouter } from './modules/tracking/tracking.routes';
 import { initSocket } from './websocket/socket.server';
 import { notificationRouter } from './modules/notification/notification.routes';
+import { routeDebugRouter } from './modules/route/route.debug.routes';
 
 
 import cors from 'cors';
@@ -38,6 +39,7 @@ app.use('/api/admin/users', userRouter);
 app.use('/api/tracking', trackingRouter);
 app.use('/api/user', userAppRouter);
 app.use('/api/user/notifications', notificationRouter);
+app.use('/api/debug', routeDebugRouter);
 
 connectDB().then(() => {
     const server = createServer(app);

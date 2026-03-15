@@ -9,12 +9,14 @@
   "scripts": {
     "dev": "nodemon",
     "start": "node dist/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run test:route-polyline",
+    "test:route-polyline": "node --test -r ts-node/register tests/route.polyline.test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@mapbox/polyline": "^1.2.1",
     "axios": "^1.13.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
