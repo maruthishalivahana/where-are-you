@@ -2,6 +2,7 @@ import { Driver } from './driver.model';
 import { Bus } from '../bus/bus.model';
 import { Route } from '../route/route.model';
 import { Stop } from '../stop/stop.model';
+import { buildEtaSnapshot } from '../../utils/eta';
 
 export const driverService = {
     listDriversByOrganization: async (organizationId: string) => {
@@ -87,6 +88,35 @@ export const driverService = {
             routeId: route._id,
         }).sort({ sequenceOrder: 1 });
 
+        const hasLiveCoordinates =
+            typeof bus.currentLat === 'number' &&
+            typeof bus.currentLng === 'number' &&
+            Number.isFinite(bus.currentLat) &&
+            Number.isFinite(bus.currentLng) &&
+            (bus.currentLat !== 0 || bus.currentLng !== 0);
+
+        const eta = buildEtaSnapshot({
+            current: {
+                latitude: hasLiveCoordinates ? bus.currentLat : route.startLat,
+                longitude: hasLiveCoordinates ? bus.currentLng : route.startLng,
+            },
+            route: {
+                totalDistanceMeters: route.totalDistanceMeters,
+                estimatedDurationSeconds: route.estimatedDurationSeconds,
+                endLat: route.endLat,
+                endLng: route.endLng,
+                polyline: route.polyline || route.encodedPolyline,
+            },
+            stops: stops.map((stop) => ({
+                id: String(stop._id),
+                name: stop.name,
+                latitude: stop.latitude,
+                longitude: stop.longitude,
+                sequenceOrder: stop.sequenceOrder,
+                radiusMeters: stop.radiusMeters,
+            })),
+        });
+
         return {
             bus: {
                 id: String(bus._id),
@@ -97,17 +127,17 @@ export const driverService = {
                 name: route.name,
                 encodedPolyline: route.encodedPolyline,
                 totalDistanceMeters: route.totalDistanceMeters,
+                totalDistanceText: eta.routeDistanceText,
                 estimatedDurationSeconds: route.estimatedDurationSeconds,
+                estimatedDurationText: eta.routeDurationText,
+                etaToDestinationSeconds: eta.etaToDestinationSeconds,
+                etaToDestinationText: eta.etaToDestinationText,
+                distanceToDestinationMeters: eta.distanceToDestinationMeters,
+                distanceToDestinationText: eta.distanceToDestinationText,
+                averageSpeedKmph: eta.averageSpeedKmph,
                 isActive: route.isActive,
             },
-            stops: stops.map((stop) => ({
-                id: String(stop._id),
-                name: stop.name,
-                latitude: stop.latitude,
-                longitude: stop.longitude,
-                sequenceOrder: stop.sequenceOrder,
-                radiusMeters: stop.radiusMeters,
-            })),
+            stops: eta.stopsWithEta,
         };
     },
 
