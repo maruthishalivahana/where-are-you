@@ -7,21 +7,39 @@ import { ENV } from '../config/env.config';
 
 let io: Server | null = null;
 
+const normalizeOrigin = (origin: string): string => origin.trim().replace(/\/+$/, '');
+
+const configuredOrigins = new Set([
+	...ENV.FRONTEND_URLS.map(normalizeOrigin),
+	...ENV.MOBILE_APP_ORIGINS.map(normalizeOrigin),
+]);
+
+const isAllowedOrigin = (origin: string | undefined): boolean => {
+	if (!origin) {
+		return true;
+	}
+
+	if (ENV.NODE_ENV !== 'production') {
+		return true;
+	}
+
+	const normalizedOrigin = normalizeOrigin(origin);
+	if (normalizedOrigin === 'null') {
+		return true;
+	}
+
+	if (configuredOrigins.size === 0) {
+		return true;
+	}
+
+	return configuredOrigins.has(normalizedOrigin);
+};
+
 export const initSocket = (server: HttpServer): Server => {
 	io = new Server(server, {
 		cors: {
 			origin: (origin, callback) => {
-				if (!origin) {
-					callback(null, true);
-					return;
-				}
-
-				if (ENV.NODE_ENV !== 'production') {
-					callback(null, true);
-					return;
-				}
-
-				if (ENV.FRONTEND_URLS.length === 0 || ENV.FRONTEND_URLS.includes(origin)) {
+				if (isAllowedOrigin(origin)) {
 					callback(null, true);
 					return;
 				}

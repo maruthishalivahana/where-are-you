@@ -10,6 +10,8 @@ const parseNumber = (value: string | undefined, fallback: number): number => {
     return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const normalizeOrigin = (origin: string): string => origin.trim().replace(/\/+$/, '');
+
 const parseOrigins = (): string[] => {
     const configuredOrigins = [
         process.env.FRONTEND_URL,
@@ -18,10 +20,25 @@ const parseOrigins = (): string[] => {
             ? process.env.FRONTEND_URLS.split(',').map((origin) => origin.trim())
             : []),
     ]
-        .map((origin) => (origin || '').trim())
+        .map((origin) => normalizeOrigin((origin || '').trim()))
         .filter((origin) => origin.length > 0);
 
     return Array.from(new Set(configuredOrigins));
+};
+
+const parseMobileOrigins = (): string[] => {
+    if (!process.env.MOBILE_APP_ORIGINS) {
+        return [];
+    }
+
+    return Array.from(
+        new Set(
+            process.env.MOBILE_APP_ORIGINS
+                .split(',')
+                .map((origin) => normalizeOrigin(origin))
+                .filter((origin) => origin.length > 0)
+        )
+    );
 };
 
 export const ENV = {
@@ -35,16 +52,9 @@ export const ENV = {
     GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY || '',
     TRACKING_UPDATE_INTERVAL_MS: parseNumber(process.env.TRACKING_UPDATE_INTERVAL_MS, 5000),
     TRACKING_MOVEMENT_THRESHOLD_METERS: parseNumber(process.env.TRACKING_MOVEMENT_THRESHOLD_METERS, 10),
-    TRACKING_STALE_THRESHOLD_MS: parseNumber(process.env.TRACKING_STALE_THRESHOLD_MS, 60000),
-    TRACKING_RUNNING_SPEED_MPS: parseNumber(process.env.TRACKING_RUNNING_SPEED_MPS, 5),
-    TRACKING_STOPPED_FRESH_THRESHOLD_MS: parseNumber(process.env.TRACKING_STOPPED_FRESH_THRESHOLD_MS, 120000),
-    TRACKING_IDLE_NO_MOVEMENT_MS: parseNumber(process.env.TRACKING_IDLE_NO_MOVEMENT_MS, 300000),
-    TRACKING_IDLE_MOVEMENT_EPSILON_METERS: parseNumber(process.env.TRACKING_IDLE_MOVEMENT_EPSILON_METERS, 3),
-    DRIVER_SOCKET_DISCONNECT_GRACE_MS: parseNumber(process.env.DRIVER_SOCKET_DISCONNECT_GRACE_MS, 15000),
-    TRIP_DELAY_THRESHOLD_MINUTES: parseNumber(process.env.TRIP_DELAY_THRESHOLD_MINUTES, 5),
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || '',
     FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL || '',
     FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY || '',
-    FRONTEND_DRIVER_USER_URL: process.env.FRONTEND_DRIVER_USER_URL || '',
     FRONTEND_URLS: parseOrigins(),
+    MOBILE_APP_ORIGINS: parseMobileOrigins(),
 };
