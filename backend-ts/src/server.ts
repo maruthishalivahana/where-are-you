@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import cors from 'cors';
 import { connectDB } from './config/db.config';
+import { getRedisClient } from './config/redis.config';
 import { ENV } from './config/env.config';
 import { logger } from './utils/logger';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
@@ -124,6 +125,14 @@ process.on('uncaughtException', (error) => {
 
 connectDB()
     .then(() => {
+        // Initialize Redis after DB connection
+        try {
+            getRedisClient();
+            logger.info('Redis initialized successfully');
+        } catch (error) {
+            logger.warn('Redis initialization warning (non-critical)', error);
+        }
+
         const server = createServer(app);
         initSocket(server);
 
@@ -132,6 +141,8 @@ connectDB()
 
         server.listen(port, host, () => {
             logger.info(`Server is running on http://${host}:${port}`);
+            logger.info(`Environment: ${ENV.NODE_ENV}`);
+            logger.info(`Tracking architecture: HTTP batch uploads + Redis caching (drivers) + WebSocket broadcast (passengers only)`);
         });
     })
     .catch((error) => {

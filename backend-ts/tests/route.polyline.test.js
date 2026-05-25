@@ -7,7 +7,24 @@ const {
     encodeCoordinatesToPolyline,
     normalizeAndSortStops,
 } = require('../src/modules/route/route.polyline.utils');
-const { buildOwnedRouteQuery } = require('../src/modules/route/route.service');
+const { buildDirectionsParams, buildOwnedRouteQuery } = require('../src/modules/route/route.service');
+
+test('buildDirectionsParams preserves stop order in waypoint string', () => {
+    const params = buildDirectionsParams(
+        { lat: 17.5, lng: 78.0 },
+        { lat: 17.9, lng: 78.4 },
+        [
+            { lat: 17.6, lng: 78.1 },
+            { lat: 17.7, lng: 78.2 },
+        ]
+    );
+
+    assert.deepEqual(params, {
+        origin: '17.5,78',
+        destination: '17.9,78.4',
+        waypoints: '17.6,78.1|17.7,78.2',
+    });
+});
 
 test('builds strict org-scoped route lookup query', () => {
     assert.deepEqual(buildOwnedRouteQuery('org-1', 'route-1'), {

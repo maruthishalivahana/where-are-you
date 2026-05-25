@@ -2,13 +2,16 @@ import { Bus } from '../bus/bus.model';
 import { Driver } from '../driver/driver.model';
 import { LocationLog } from '../locationLog/locationLog.model';
 import { TRACKING_EVENTS } from './tracking.events';
-import { getBusRoom } from '../../websocket/socket.rooms';
+import { getBusRoom, getRouteRoom } from '../../websocket/socket.rooms';
 import { getIO } from '../../websocket/socket.server';
 import { ENV } from '../../config/env.config';
 import { calculateDistanceMeters } from '../../utils/calculateDistance';
 import { notificationService } from '../notification/notification.service';
 import { tripService } from '../trip/trip.service';
 import { logger } from '../../utils/logger';
+import { Stop } from '../stop/stop.model';
+import { Route } from '../route/route.model';
+import { buildEtaSnapshot } from '../../utils/eta';
 
 type DriverLocationCacheEntry = {
     driverId: string;
@@ -37,6 +40,9 @@ const PREDICTION_TICK_MS = 4_000;
 const MAX_PREDICTION_SPEED_MPS = 35;
 const RATE_LIMIT_WINDOW_MS = 10_000;
 const RATE_LIMIT_MAX_REQUESTS = 25;
+const STOP_REACHED_THRESHOLD_METERS = 100;
+
+const lastReachedStopByBus = new Map<string, string>();
 
 const validateCoordinates = (latitude: number, longitude: number): void => {
     if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
@@ -165,6 +171,180 @@ const emitBusLocationSafely = (params: {
     } catch (error) {
         const message = error instanceof Error ? error.message : 'socket emit failed';
         logger.warn(`[Tracking] socket emit skipped for bus=${params.busId}: ${message}`);
+    }
+};
+
+const emitStopUpdateSafely = (params: {
+    busId: string;
+    routeId: string;
+    currentStopId: string;
+    nextStopId: string | null;
+    timestamp: Date;
+    timeline?: {
+        currentStop: Record<string, unknown> | null;
+        nextStop: Record<string, unknown> | null;
+    };
+}) => {
+    try {
+        const io = getIO();
+        io.to(getRouteRoom(params.routeId)).emit(TRACKING_EVENTS.STOP_UPDATE, {
+            busId: params.busId,
+            routeId: params.routeId,
+            currentStopId: params.currentStopId,
+            nextStopId: params.nextStopId,
+            timestamp: params.timestamp.getTime(),
+            timeline: params.timeline || null,
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'socket emit failed';
+        logger.warn(
+            `[Tracking] stopUpdate emit skipped for bus=${params.busId} route=${params.routeId}: ${message}`
+        );
+    }
+};
+
+const emitEtaUpdateSafely = (params: {
+    busId: string;
+    routeId: string;
+    timestamp: Date;
+    etaSnapshot: Record<string, unknown>;
+}) => {
+    try {
+        const io = getIO();
+        io.to(getRouteRoom(params.routeId)).emit(TRACKING_EVENTS.ETA_UPDATE, {
+            busId: params.busId,
+            routeId: params.routeId,
+            timestamp: params.timestamp.getTime(),
+            ...params.etaSnapshot,
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'socket emit failed';
+        logger.warn(
+            `[Tracking] etaUpdate emit skipped for bus=${params.busId} route=${params.routeId}: ${message}`
+        );
+    }
+};
+
+const detectStopCrossingAndEmit = async (params: {
+    organizationId: string;
+    busId: string;
+    routeId: string;
+    latitude: number;
+    longitude: number;
+    timestamp: Date;
+}) => {
+    try {
+        const stops = await Stop.find({
+            organizationId: params.organizationId,
+            routeId: params.routeId,
+        })
+            .sort({ sequenceOrder: 1 })
+            .select('_id name latitude longitude sequenceOrder radiusMeters');
+
+        if (stops.length === 0) {
+            return;
+        }
+
+        let nearestIndex = -1;
+        let nearestDistanceMeters = Number.POSITIVE_INFINITY;
+
+        for (let index = 0; index < stops.length; index += 1) {
+            const stop = stops[index];
+            const distanceMeters = calculateDistanceMeters(
+                params.latitude,
+                params.longitude,
+                stop.latitude,
+                stop.longitude
+            );
+
+            if (distanceMeters < nearestDistanceMeters) {
+                nearestDistanceMeters = distanceMeters;
+                nearestIndex = index;
+            }
+        }
+
+        if (nearestIndex < 0 || nearestDistanceMeters >= STOP_REACHED_THRESHOLD_METERS) {
+            return;
+        }
+
+        const currentStopId = String(stops[nearestIndex]._id);
+        const previousStopId = lastReachedStopByBus.get(params.busId);
+        if (previousStopId === currentStopId) {
+            return;
+        }
+
+        lastReachedStopByBus.set(params.busId, currentStopId);
+
+        const nextStop = stops[nearestIndex + 1];
+        const route = await Route.findOne({
+            _id: params.routeId,
+            organizationId: params.organizationId,
+        }).select('totalDistanceMeters estimatedDurationSeconds endLat endLng polyline encodedPolyline timezone');
+
+        const eta = route
+            ? buildEtaSnapshot({
+                current: {
+                    latitude: params.latitude,
+                    longitude: params.longitude,
+                },
+                route: {
+                    totalDistanceMeters: route.totalDistanceMeters,
+                    estimatedDurationSeconds: route.estimatedDurationSeconds,
+                    endLat: route.endLat,
+                    endLng: route.endLng,
+                    polyline: route.polyline || route.encodedPolyline,
+                    timezone: (route as any).timezone || ENV.TRACKING_TIMEZONE,
+                },
+                stops: stops.map((stop) => ({
+                    id: String(stop._id),
+                    name: stop.name,
+                    latitude: stop.latitude,
+                    longitude: stop.longitude,
+                    sequenceOrder: stop.sequenceOrder,
+                    radiusMeters: stop.radiusMeters,
+                })),
+            })
+            : null;
+
+        const currentStopTimeline = eta?.stopsWithEta.find((stop) => stop.id === currentStopId) || null;
+        const nextStopTimeline = nextStop
+            ? eta?.stopsWithEta.find((stop) => stop.id === String(nextStop._id)) || null
+            : null;
+
+        emitStopUpdateSafely({
+            busId: params.busId,
+            routeId: params.routeId,
+            currentStopId,
+            nextStopId: nextStop ? String(nextStop._id) : null,
+            timestamp: params.timestamp,
+            timeline: {
+                currentStop: currentStopTimeline,
+                nextStop: nextStopTimeline,
+            },
+        });
+
+        if (eta) {
+            emitEtaUpdateSafely({
+                busId: params.busId,
+                routeId: params.routeId,
+                timestamp: params.timestamp,
+                etaSnapshot: {
+                    etaToDestinationSeconds: eta.etaToDestinationSeconds,
+                    etaToDestinationText: eta.etaToDestinationText,
+                    averageSpeedKmph: eta.averageSpeedKmph,
+                    stops: eta.stopsWithEta,
+                },
+            });
+        }
+
+        logger.info(
+            `[Tracking] stop reached bus=${params.busId} route=${params.routeId} stop=${currentStopId} distance=${Math.round(nearestDistanceMeters)}m`
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'stop crossing detection failed';
+        logger.warn(
+            `[Tracking] stop crossing detection failed bus=${params.busId} route=${params.routeId}: ${message}`
+        );
     }
 };
 
@@ -476,6 +656,17 @@ export const trackingService = {
             isPredicted: false,
         });
 
+        if (bus.routeId) {
+            await detectStopCrossingAndEmit({
+                organizationId,
+                busId: String(bus._id),
+                routeId: String(bus.routeId),
+                latitude: smoothedLatitude,
+                longitude: smoothedLongitude,
+                timestamp: recordedAt,
+            });
+        }
+
         driverLocationCache.set(driverId, {
             driverId,
             organizationId,
@@ -514,5 +705,47 @@ export const trackingService = {
             isPredicted: false,
             persisted: shouldPersistLog,
         };
+    },
+
+    /**
+     * Get last recorded location for a driver from database
+     */
+    async getLastDriverLocation(driverId: string) {
+        try {
+            const lastLog = await LocationLog.findOne({ driverId }).sort({ timestamp: -1 }).lean();
+            return lastLog;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            logger.warn(`Failed to get last driver location: ${message}`);
+            return null;
+        }
+    },
+
+    /**
+     * Get last recorded location for a trip from database
+     */
+    async getLastTripLocation(tripId: string) {
+        try {
+            const lastLog = await LocationLog.findOne({ tripId }).sort({ timestamp: -1 }).lean();
+            return lastLog;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            logger.warn(`Failed to get last trip location: ${message}`);
+            return null;
+        }
+    },
+
+    /**
+     * Get last recorded location for a bus from database
+     */
+    async getLastBusLocation(busId: string) {
+        try {
+            const lastLog = await LocationLog.findOne({ busId }).sort({ timestamp: -1 }).lean();
+            return lastLog;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            logger.warn(`Failed to get last bus location: ${message}`);
+            return null;
+        }
     },
 };

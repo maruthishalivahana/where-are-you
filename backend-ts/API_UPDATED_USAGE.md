@@ -3,6 +3,7 @@
 ## Changes Summary
 - **Driver Assignment**: Now uses `memberId` instead of `driverId`
 - **Route Assignment**: Now uses `routeName` instead of `routeId`
+- **Live Tracking Timeline**: Stop timeline metadata is now time-based (`status`, `leftSubLabel`, `rightPrimaryLabel`, clock times) while legacy distance fields remain for migration
 
 ---
 
@@ -154,6 +155,26 @@ or
    - Organization-scoped lookups (no cross-org assignments)
 4. Names and IDs are case-sensitive
 5. Whitespace is automatically trimmed from input
+
+---
+
+## Live Tracking Timeline Migration Notes
+
+New per-stop fields are now emitted by backend live route payloads:
+
+- `status`: `passed` | `current` | `upcoming`
+- `leftSubLabel`, `rightPrimaryLabel`, `rightSecondaryLabel`
+- `etaFromCurrentText`: deterministic (`Arriving Now`, `In <1 min`, `In N mins`)
+- `arrivalClockTimeText`, `departedClockTimeText` (`h:mm AM/PM`)
+
+Socket payload updates:
+
+- `stopUpdate`: old keys preserved; new optional `timeline.currentStop` and `timeline.nextStop` added.
+- `etaUpdate`: now includes `stops` with time-based metadata and route ETA summary fields.
+
+Compatibility:
+
+- Distance fields are still present during migration. Prefer new time fields for timeline UI.
 
 ---
 

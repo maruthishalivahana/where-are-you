@@ -1,31 +1,51 @@
 import { Socket } from 'socket.io';
 import mongoose from 'mongoose';
 import { TRACKING_EVENTS } from '../modules/tracking/tracking.events';
-import { trackingService } from '../modules/tracking/tracking.service';
 import { logger } from '../utils/logger';
-import { getBusRoom } from './socket.rooms';
+import { getBusRoom, getRouteRoom } from './socket.rooms';
 import { ROLES } from '../constants/roles';
 import { Bus } from '../modules/bus/bus.model';
+import { Route } from '../modules/route/route.model';
 
-interface DriverLocationPayload {
-	busId: string;
-	latitude: number;
-	longitude: number;
-	speed?: number;
-	heading?: number;
-	timestamp?: string;
-}
-
-const isValidNumber = (value: unknown): value is number =>
-	typeof value === 'number' && Number.isFinite(value);
+/**
+ * REFACTORED Socket Handlers
+ * 
+ * REMOVED:
+ * - Driver location update handler (driverLocationUpdate)
+ * - Driver socket authentication
+ * - Socket-based tracking ingestion
+ * 
+ * KEPT:
+ * - Passenger room subscriptions (JOIN_BUS_ROOM, JOIN_ROUTE_ROOM)
+ * - Route/Bus broadcast listeners
+ * 
+ * RATIONALE:
+ * - Drivers now use HTTP batch uploads (battery-efficient)
+ * - WebSockets are for PASSENGER apps only
+ * - No persistent driver socket connections
+ * - Location broadcast to passengers from Redis cache
+ */
 
 const escapeRegex = (value: string): string =>
 	value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export const registerSocketHandlers = (socket: Socket): void => {
+	/**
+	 * Passenger/Admin joins bus room to receive location updates
+	 * PASSENGERS ONLY - drivers use HTTP batch API
+	 */
 	socket.on(TRACKING_EVENTS.JOIN_BUS_ROOM, async (busId: string) => {
 		try {
 			if (!socket.data.user) {
+				logger.warn(`joinBusRoom: No user data for socket ${socket.id}`);
+				return;
+			}
+
+			// CRITICAL: Only passengers and admins can join bus rooms
+			if (![ROLES.USER, ROLES.ADMIN].includes(socket.data.user.role)) {
+				logger.warn(
+					`joinBusRoom denied: socket=${socket.id}, role=${socket.data.user.role} (drivers use HTTP batch API)`
+				);
 				return;
 			}
 
@@ -49,73 +69,87 @@ export const registerSocketHandlers = (socket: Socket): void => {
 
 			if (!bus) {
 				logger.warn(
-					`joinBusRoom denied: socket=${socket.id}, role=${socket.data.user.role}, busRef=${trimmedBusId}`
+					`joinBusRoom denied: bus not found, socket=${socket.id}, role=${socket.data.user.role}, busRef=${trimmedBusId}`
 				);
 				return;
 			}
 
 			socket.join(getBusRoom(String(bus._id)));
+			logger.info(`Socket ${socket.id} joined bus room: ${getBusRoom(String(bus._id))}`);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Unknown socket error';
 			logger.warn(`joinBusRoom failed for socket ${socket.id}: ${message}`);
 		}
 	});
 
-	socket.on(TRACKING_EVENTS.DRIVER_LOCATION_UPDATE, async (payload: DriverLocationPayload) => {
+	/**
+	 * Passenger/Admin joins route room to receive ETA and stop updates
+	 * PASSENGERS ONLY - drivers do not subscribe to route rooms
+	 */
+	socket.on(TRACKING_EVENTS.JOIN_ROUTE_ROOM, async (routeId: string) => {
 		try {
 			if (!socket.data.user) {
+				logger.warn(`joinRouteRoom: No user data for socket ${socket.id}`);
 				return;
 			}
 
-			if (socket.data.user.role !== ROLES.DRIVER) {
-				logger.warn(`Unauthorized role for location update: socket=${socket.id}, role=${socket.data.user.role}`);
-				return;
-			}
-
-			if (
-				!payload ||
-				!isValidNumber(payload.latitude) ||
-				!isValidNumber(payload.longitude)
-			) {
-				return;
-			}
-
-			if (typeof payload.speed !== 'undefined' && !isValidNumber(payload.speed)) {
-				return;
-			}
-
-			if (typeof payload.heading !== 'undefined' && !isValidNumber(payload.heading)) {
-				return;
-			}
-
-			let recordedAt: Date | undefined;
-			if (typeof payload.timestamp === 'string' && payload.timestamp.trim().length > 0) {
-				recordedAt = new Date(payload.timestamp);
-				if (Number.isNaN(recordedAt.getTime())) {
-					return;
-				}
-			}
-
-			const updated = await trackingService.updateMyBusLocation(
-				socket.data.user.sub,
-				socket.data.user.organizationId,
-				payload.latitude,
-				payload.longitude,
-				payload.speed,
-				recordedAt,
-				payload.heading
-			);
-
-			if (payload.busId && payload.busId.trim() && payload.busId.trim() !== updated.busId) {
+			// CRITICAL: Only passengers and admins can join route rooms
+			if (![ROLES.USER, ROLES.ADMIN].includes(socket.data.user.role)) {
 				logger.warn(
-					`driverLocationUpdate busId mismatch: socket=${socket.id}, payload=${payload.busId}, assigned=${updated.busId}`
+					`joinRouteRoom denied: socket=${socket.id}, role=${socket.data.user.role}`
 				);
+				return;
 			}
+
+			if (!routeId || typeof routeId !== 'string') {
+				return;
+			}
+
+			const trimmedRouteId = routeId.trim();
+			if (!mongoose.isValidObjectId(trimmedRouteId)) {
+				return;
+			}
+
+			const route = await Route.findOne({
+				_id: trimmedRouteId,
+				organizationId: socket.data.user.organizationId,
+			}).select('_id');
+
+			if (!route) {
+				logger.warn(
+					`joinRouteRoom denied: route not found, socket=${socket.id}, role=${socket.data.user.role}, routeId=${trimmedRouteId}`
+				);
+				return;
+			}
+
+			socket.join(getRouteRoom(String(route._id)));
+			logger.info(`Socket ${socket.id} joined route room: ${getRouteRoom(String(route._id))}`);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Unknown socket error';
-			logger.warn(`driverLocationUpdate failed for socket ${socket.id}: ${message}`);
+			logger.warn(`joinRouteRoom failed for socket ${socket.id}: ${message}`);
 		}
 	});
+
+	/**
+	 * REMOVED: DRIVER_LOCATION_UPDATE handler
+	 * 
+	 * This handler was used for realtime driver location updates via WebSocket.
+	 * It has been COMPLETELY REMOVED because:
+	 * 
+	 * 1. UNRELIABLE: iOS suspends WebSocket connections in background
+	 * 2. BATTERY INEFFICIENT: Persistent socket connections drain battery
+	 * 3. SCALABILITY: 1000+ drivers require massive server memory
+	 * 4. BETTER APPROACH: HTTP batch uploads are more reliable
+	 * 
+	 * Drivers now use: POST /api/tracking/batch (HTTP API)
+	 * Benefits:
+	 * - Works in background mode
+	 * - Battery efficient (periodic requests vs persistent connection)
+	 * - Easier to scale (stateless HTTP)
+	 * - Built-in retry logic
+	 * - Replay attack prevention (nonce)
+	 * - Rate limiting
+	 */
 
 	socket.on('disconnect', () => {
 		logger.info(`Socket client disconnected: ${socket.id}`);

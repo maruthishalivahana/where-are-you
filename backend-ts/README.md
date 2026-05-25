@@ -37,6 +37,50 @@ Configurable thresholds (`.env`):
 
 ---
 
+## Live Route Stop Timeline Metadata (Time-Based)
+
+Live route payloads now include backend-computed, time-first stop timeline fields.
+
+Per-stop contract (primary fields):
+
+- `id`
+- `name`
+- `sequenceOrder`
+- `isPassed`
+- `etaFromCurrentSeconds`
+- `etaFromCurrentText` (`Arriving Now`, `In <1 min`, `In N mins`)
+- `segmentEtaSeconds`
+- `segmentEtaText`
+- `arrivalClockTimeText` (`h:mm AM/PM`)
+- `departedClockTimeText` (for passed stops when available)
+- `status` (`passed` | `current` | `upcoming`)
+- `leftSubLabel`
+- `rightPrimaryLabel`
+- `rightSecondaryLabel` (`CURRENT` only for current stop)
+
+Label behavior:
+
+- `passed` stop: `leftSubLabel = Departed h:mm AM/PM`, `rightPrimaryLabel = Passed`
+- `current` stop: `leftSubLabel = Arriving Now`, `rightPrimaryLabel = <current local clock time>`, `rightSecondaryLabel = CURRENT`
+- `upcoming` stop: `leftSubLabel = In X mins`, `rightPrimaryLabel = <arrival clock time>`
+
+Timezone behavior:
+
+- Clock labels use route timezone when provided.
+- Fallback timezone is `TRACKING_TIMEZONE` (or `APP_TIMEZONE`), then `UTC`.
+
+Migration / backward compatibility:
+
+- Existing distance fields are still returned for compatibility (`distanceFromCurrentMeters`, `distanceFromCurrentText`, `segmentDistanceMeters`, `segmentDistanceText`).
+- New clients should treat time-based fields above as the source of truth for timeline rows.
+
+Socket alignment:
+
+- `stopUpdate` keeps legacy keys and now includes optional `timeline.currentStop` and `timeline.nextStop` objects.
+- `etaUpdate` includes route ETA summary and `stops` with full time-based timeline metadata.
+
+---
+
 ## Auth APIs
 
 ### 1. Admin Signup

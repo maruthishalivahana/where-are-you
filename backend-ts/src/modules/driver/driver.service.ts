@@ -7,6 +7,7 @@ import { calculateDistanceMeters } from '../../utils/calculateDistance';
 import { logger } from '../../utils/logger';
 import { tripService } from '../trip/trip.service';
 import { hashPassword } from '../../utils/hashPassword';
+import { ENV } from '../../config/env.config';
 
 const formatBusSnapshot = (bus: any, activeTrip: any) => {
     if (!bus) {
@@ -384,6 +385,7 @@ export const driverService = {
                 endLat: route.endLat,
                 endLng: route.endLng,
                 polyline: route.polyline || route.encodedPolyline,
+                timezone: (route as any).timezone || ENV.TRACKING_TIMEZONE,
             },
             stops: stopsForEta,
         });

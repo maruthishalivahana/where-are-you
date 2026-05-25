@@ -55,6 +55,11 @@ export const ENV = {
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || '',
     FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL || '',
     FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY || '',
+    TRACKING_TIMEZONE: process.env.TRACKING_TIMEZONE || process.env.APP_TIMEZONE || 'UTC',
+    REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+    REDIS_PORT: parseNumber(process.env.REDIS_PORT, 6379),
+    REDIS_PASSWORD: process.env.REDIS_PASSWORD,
+    REDIS_DB: parseNumber(process.env.REDIS_DB, 0),
     FRONTEND_URLS: parseOrigins(),
     MOBILE_APP_ORIGINS: parseMobileOrigins(),
 };

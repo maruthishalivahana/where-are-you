@@ -10,6 +10,8 @@ export interface IRoute extends Document {
     endLat: number;
     endLng: number;
     version: number;
+    forwardPolyline: string;
+    reversePolyline: string;
     polyline: string;
     encodedPolyline: string;
     polylineStopsHash: string;
@@ -34,6 +36,8 @@ const RouteSchema = new Schema<IRoute>(
         endLat: { type: Number, required: true },
         endLng: { type: Number, required: true },
         version: { type: Number, default: 1 },
+        forwardPolyline: { type: String, default: '' },
+        reversePolyline: { type: String, default: '' },
         polyline: { type: String, default: '' },
         encodedPolyline: { type: String, default: '' },
         polylineStopsHash: { type: String, default: '' },

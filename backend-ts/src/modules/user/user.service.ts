@@ -8,6 +8,7 @@ import { BusSubscription } from '../busSubscription/busSubscription.model';
 import { buildEtaSnapshot } from '../../utils/eta';
 import { calculateDistanceMeters } from '../../utils/calculateDistance';
 import { tripService } from '../trip/trip.service';
+import { ENV } from '../../config/env.config';
 
 const toObjectId = (id: string) => new mongoose.Types.ObjectId(id);
 
@@ -241,6 +242,7 @@ export const userService = {
                     endLat: route.endLat,
                     endLng: route.endLng,
                     polyline: route.polyline || route.encodedPolyline,
+                    timezone: (route as any).timezone || ENV.TRACKING_TIMEZONE,
                 },
                 stops: stopsForEta,
             })

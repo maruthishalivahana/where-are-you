@@ -15,10 +15,11 @@ import {
     mergeCoordinateSegments,
     normalizeAndSortStops,
 } from './route.polyline.utils';
+import { logger } from '../../utils/logger';
 
 const DIRECTIONS_URL = 'https://maps.googleapis.com/maps/api/directions/json';
 const DIRECTIONS_TIMEOUT_MS = 5000;
-const DIRECTIONS_MAX_ATTEMPTS = 3;
+const DIRECTIONS_MAX_ATTEMPTS = 2;
 const SANGAREDDY_BOUNDS = {
     minLat: 17.5,
     maxLat: 17.7,
@@ -71,9 +72,17 @@ interface RouteGeometry {
     estimatedDurationSeconds: number;
 }
 
+interface BidirectionalRouteGeometry {
+    forwardPolyline: string;
+    reversePolyline: string;
+    totalDistanceMeters: number;
+    estimatedDurationSeconds: number;
+}
+
 interface PolylinePreparationResult {
     route: InstanceType<typeof Route>;
-    polyline: string;
+    forwardPolyline: string;
+    reversePolyline: string;
     orderedStops: NormalizedStop[];
     generationSource: 'cache' | 'regenerated';
     regenerationReason: string;
@@ -90,13 +99,25 @@ const delay = async (milliseconds: number): Promise<void> => {
     await new Promise((resolve) => setTimeout(resolve, milliseconds));
 };
 
-const getStoredPolyline = (route: InstanceType<typeof Route>): string => {
+const getStoredForwardPolyline = (route: InstanceType<typeof Route>): string => {
+    if (hasValidPolyline(route.forwardPolyline)) {
+        return route.forwardPolyline;
+    }
+
     if (hasValidPolyline(route.polyline)) {
         return route.polyline;
     }
 
     if (hasValidPolyline(route.encodedPolyline)) {
         return route.encodedPolyline;
+    }
+
+    return '';
+};
+
+const getStoredReversePolyline = (route: InstanceType<typeof Route>): string => {
+    if (hasValidPolyline(route.reversePolyline)) {
+        return route.reversePolyline;
     }
 
     return '';
@@ -129,10 +150,8 @@ const getDirectionsChunk = async (
             const { data } = await axios.get<DirectionsResponse>(DIRECTIONS_URL, {
                 timeout: DIRECTIONS_TIMEOUT_MS,
                 params: {
-                    origin: toLatLngString(origin),
-                    destination: toLatLngString(destination),
+                    ...buildDirectionsParams(origin, destination, waypoints),
                     mode: 'driving',
-                    waypoints: waypoints.length > 0 ? waypoints.map(toLatLngString).join('|') : undefined,
                     key: ENV.GOOGLE_MAPS_API_KEY,
                 },
             });
@@ -163,6 +182,16 @@ const getDirectionsChunk = async (
         `Directions provider failed after ${DIRECTIONS_MAX_ATTEMPTS} attempts: ${lastErrorMessage}`
     );
 };
+
+export const buildDirectionsParams = (
+    origin: Coordinate,
+    destination: Coordinate,
+    waypoints: Coordinate[] = []
+) => ({
+    origin: toLatLngString(origin),
+    destination: toLatLngString(destination),
+    waypoints: waypoints.length > 0 ? waypoints.map(toLatLngString).join('|') : undefined,
+});
 
 const getRouteGeometry = async (
     origin: Coordinate,
@@ -205,6 +234,46 @@ const getRouteGeometry = async (
     };
 };
 
+const getBidirectionalRouteGeometry = async (params: {
+    routeId: string;
+    origin: Coordinate;
+    destination: Coordinate;
+    orderedStops: NormalizedStop[];
+}): Promise<BidirectionalRouteGeometry> => {
+    try {
+        const forwardGeometry = await getRouteGeometry(
+            params.origin,
+            params.destination,
+            params.orderedStops
+        );
+
+        const reverseGeometry = await getRouteGeometry(
+            params.destination,
+            params.origin,
+            [...params.orderedStops].reverse()
+        );
+
+        if (!hasValidPolyline(forwardGeometry.polyline) || !hasValidPolyline(reverseGeometry.polyline)) {
+            throw new Error('Directions provider returned invalid bidirectional polylines');
+        }
+
+        return {
+            forwardPolyline: forwardGeometry.polyline,
+            reversePolyline: reverseGeometry.polyline,
+            totalDistanceMeters: forwardGeometry.totalDistanceMeters,
+            estimatedDurationSeconds: forwardGeometry.estimatedDurationSeconds,
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown directions error';
+        logger.error('[RoutePolyline] bidirectional generation failed', {
+            routeId: params.routeId,
+            stopCount: params.orderedStops.length,
+            error: message,
+        });
+        throw error;
+    }
+};
+
 const markRouteAsPolylineDirty = (route: InstanceType<typeof Route>): void => {
     route.version = (route.version ?? 1) + 1;
     route.polylineStopsHash = '';
@@ -215,7 +284,8 @@ const markRouteAsPolylineDirty = (route: InstanceType<typeof Route>): void => {
 
 const resolveRegenerationReason = (
     route: InstanceType<typeof Route>,
-    storedPolyline: string,
+    storedForwardPolyline: string,
+    storedReversePolyline: string,
     stopsHash: string,
     routeSignature: string,
     forceRefresh: boolean
@@ -224,8 +294,12 @@ const resolveRegenerationReason = (
         return 'forced_refresh';
     }
 
-    if (!hasValidPolyline(storedPolyline)) {
-        return 'polyline_missing';
+    if (!hasValidPolyline(storedForwardPolyline)) {
+        return 'forward_polyline_missing';
+    }
+
+    if (!hasValidPolyline(storedReversePolyline)) {
+        return 'reverse_polyline_missing';
     }
 
     if (route.polylineStopsHash !== stopsHash) {
@@ -254,19 +328,23 @@ const ensureRoutePolyline = async (
         { lat: route.startLat, lng: route.startLng },
         { lat: route.endLat, lng: route.endLng }
     );
-    const currentPolyline = getStoredPolyline(route);
+    const currentForwardPolyline = getStoredForwardPolyline(route);
+    const currentReversePolyline = getStoredReversePolyline(route);
 
     const hasMissingMetadata =
         !route.polylineStopsHash || !route.polylineRouteSignature || (route.polylineVersion ?? 0) === 0;
 
     if (
-        hasValidPolyline(currentPolyline) &&
+        hasValidPolyline(currentForwardPolyline) &&
+        hasValidPolyline(currentReversePolyline) &&
         options.forceRefresh !== true &&
         hasMissingMetadata &&
-        areStopsNearPolyline(currentPolyline, orderedStops, 150)
+        areStopsNearPolyline(currentForwardPolyline, orderedStops, 150)
     ) {
-        route.polyline = currentPolyline;
-        route.encodedPolyline = currentPolyline;
+        route.forwardPolyline = currentForwardPolyline;
+        route.reversePolyline = currentReversePolyline;
+        route.polyline = currentForwardPolyline;
+        route.encodedPolyline = currentForwardPolyline;
         route.polylineStopsHash = stopsHash;
         route.polylineRouteSignature = routeSignature;
         route.polylineGeneratedAt = route.polylineGeneratedAt || new Date();
@@ -275,7 +353,8 @@ const ensureRoutePolyline = async (
 
         return {
             route,
-            polyline: currentPolyline,
+            forwardPolyline: currentForwardPolyline,
+            reversePolyline: currentReversePolyline,
             orderedStops,
             generationSource: 'cache',
             regenerationReason: 'metadata_backfilled',
@@ -284,40 +363,52 @@ const ensureRoutePolyline = async (
 
     const regenerationReason = resolveRegenerationReason(
         route,
-        currentPolyline,
+        currentForwardPolyline,
+        currentReversePolyline,
         stopsHash,
         routeSignature,
         options.forceRefresh === true
     );
 
     if (!regenerationReason) {
-        if (!hasValidPolyline(route.polyline) || route.encodedPolyline !== route.polyline) {
-            route.polyline = currentPolyline;
-            route.encodedPolyline = currentPolyline;
+        if (
+            route.forwardPolyline !== currentForwardPolyline ||
+            route.reversePolyline !== currentReversePolyline ||
+            !hasValidPolyline(route.polyline) ||
+            route.encodedPolyline !== route.polyline
+        ) {
+            route.forwardPolyline = currentForwardPolyline;
+            route.reversePolyline = currentReversePolyline;
+            route.polyline = currentForwardPolyline;
+            route.encodedPolyline = currentForwardPolyline;
             await route.save();
         }
 
         return {
             route,
-            polyline: currentPolyline,
+            forwardPolyline: currentForwardPolyline,
+            reversePolyline: currentReversePolyline,
             orderedStops,
             generationSource: 'cache',
             regenerationReason: 'cached',
         };
     }
 
-    const geometry = await getRouteGeometry(
-        { lat: route.startLat, lng: route.startLng },
-        { lat: route.endLat, lng: route.endLng },
-        orderedStops
-    );
+    const geometry = await getBidirectionalRouteGeometry({
+        routeId: String(route._id),
+        origin: { lat: route.startLat, lng: route.startLng },
+        destination: { lat: route.endLat, lng: route.endLng },
+        orderedStops,
+    });
 
-    if (!hasValidPolyline(geometry.polyline)) {
+    if (!hasValidPolyline(geometry.forwardPolyline) || !hasValidPolyline(geometry.reversePolyline)) {
         throw new Error('Directions provider returned an invalid polyline');
     }
 
-    route.polyline = geometry.polyline;
-    route.encodedPolyline = geometry.polyline;
+    route.forwardPolyline = geometry.forwardPolyline;
+    route.reversePolyline = geometry.reversePolyline;
+    route.polyline = geometry.forwardPolyline;
+    route.encodedPolyline = geometry.forwardPolyline;
     route.polylineStopsHash = stopsHash;
     route.polylineRouteSignature = routeSignature;
     route.polylineGeneratedAt = new Date();
@@ -328,7 +419,8 @@ const ensureRoutePolyline = async (
 
     return {
         route,
-        polyline: geometry.polyline,
+        forwardPolyline: geometry.forwardPolyline,
+        reversePolyline: geometry.reversePolyline,
         orderedStops,
         generationSource: 'regenerated',
         regenerationReason,
@@ -342,11 +434,12 @@ export const routeService = {
             throw new Error(`Route with name "${input.name}" already exists`);
         }
 
-        const geometry = await getRouteGeometry(
-            { lat: input.startLat, lng: input.startLng },
-            { lat: input.endLat, lng: input.endLng },
-            []
-        );
+        const geometry = await getBidirectionalRouteGeometry({
+            routeId: 'new',
+            origin: { lat: input.startLat, lng: input.startLng },
+            destination: { lat: input.endLat, lng: input.endLng },
+            orderedStops: [],
+        });
 
         const initialStopsHash = computeStopsHash([]);
         const initialSignature = buildRouteSignature(
@@ -364,8 +457,10 @@ export const routeService = {
             endLat: input.endLat,
             endLng: input.endLng,
             version: 1,
-            polyline: geometry.polyline,
-            encodedPolyline: geometry.polyline,
+            forwardPolyline: geometry.forwardPolyline,
+            reversePolyline: geometry.reversePolyline,
+            polyline: geometry.forwardPolyline,
+            encodedPolyline: geometry.forwardPolyline,
             polylineStopsHash: initialStopsHash,
             polylineGeneratedAt: new Date(),
             polylineVersion: 1,
@@ -441,6 +536,12 @@ export const routeService = {
         }
 
         await route.save();
+
+        if (hasRouteChanged) {
+            const prepared = await ensureRoutePolyline(organizationId, route, { forceRefresh: true });
+            return formatRoute(prepared.route);
+        }
+
         return formatRoute(route);
     },
 
@@ -502,7 +603,7 @@ export const routeService = {
             routeId: String(route._id),
             stopCount: prepared.orderedStops.length,
             orderedStopIds: prepared.orderedStops.map((stop) => stop._id),
-            polylineLength: prepared.polyline.length,
+            polylineLength: prepared.forwardPolyline.length,
             generationSource: prepared.generationSource,
             regenerationReason: prepared.regenerationReason,
         });
@@ -516,11 +617,13 @@ export const routeService = {
 
         return {
             routeId: String(route._id),
-            polyline: prepared.polyline,
+            forwardPolyline: prepared.forwardPolyline,
+            reversePolyline: prepared.reversePolyline,
+            polyline: prepared.forwardPolyline,
             stops: normalizedStops,
             id: String(route._id),
             name: route.name,
-            encodedPolyline: prepared.polyline,
+            encodedPolyline: prepared.forwardPolyline,
             route_id: String(route._id),
             start: {
                 name: route.startName || 'Start',
@@ -543,20 +646,20 @@ export const routeService = {
 
         const prepared = await ensureRoutePolyline(organizationId, routeDoc);
         const route = prepared.route;
-        const decodedPolyline = decodePolylineToCoordinates(prepared.polyline);
+        const decodedPolyline = decodePolylineToCoordinates(prepared.forwardPolyline);
         const pointsInSangareddy = decodedPolyline.filter((point) =>
             isWithinSangareddyBounds(point.lat, point.lng)
         ).length;
 
         console.log('Route ID:', route._id);
-        console.log('Encoded polyline length:', prepared.polyline.length);
+        console.log('Encoded polyline length:', prepared.forwardPolyline.length);
         console.log('Decoded points:', decodedPolyline.length);
         console.log('Points in Sangareddy area:', pointsInSangareddy);
 
         return {
             routeId: String(route._id),
             name: route.name,
-            encodedPolyline: prepared.polyline,
+            encodedPolyline: prepared.forwardPolyline,
             decodedPolyline,
             totalDistanceMeters: route.totalDistanceMeters,
             estimatedDurationSeconds: route.estimatedDurationSeconds,
@@ -572,25 +675,32 @@ export const routeService = {
     },
 };
 
-const formatRoute = (route: InstanceType<typeof Route>) => ({
-    id: String(route._id),
-    name: route.name,
-    startName: route.startName || 'Start',
-    endName: route.endName || 'Destination',
-    startLat: route.startLat,
-    startLng: route.startLng,
-    endLat: route.endLat,
-    endLng: route.endLng,
-    version: route.version,
-    polyline: hasValidPolyline(route.polyline) ? route.polyline : route.encodedPolyline,
-    encodedPolyline: hasValidPolyline(route.polyline) ? route.polyline : route.encodedPolyline,
-    polylineStopsHash: route.polylineStopsHash,
-    polylineGeneratedAt: route.polylineGeneratedAt,
-    polylineVersion: route.polylineVersion,
-    polylineRouteSignature: route.polylineRouteSignature,
-    totalDistanceMeters: route.totalDistanceMeters,
-    estimatedDurationSeconds: route.estimatedDurationSeconds,
-    isActive: route.isActive,
-    createdAt: route.createdAt,
-    updatedAt: route.updatedAt,
-});
+const formatRoute = (route: InstanceType<typeof Route>) => {
+    const forwardPolyline = getStoredForwardPolyline(route);
+    const reversePolyline = getStoredReversePolyline(route);
+
+    return {
+        id: String(route._id),
+        name: route.name,
+        startName: route.startName || 'Start',
+        endName: route.endName || 'Destination',
+        startLat: route.startLat,
+        startLng: route.startLng,
+        endLat: route.endLat,
+        endLng: route.endLng,
+        version: route.version,
+        forwardPolyline,
+        reversePolyline,
+        polyline: forwardPolyline,
+        encodedPolyline: forwardPolyline,
+        polylineStopsHash: route.polylineStopsHash,
+        polylineGeneratedAt: route.polylineGeneratedAt,
+        polylineVersion: route.polylineVersion,
+        polylineRouteSignature: route.polylineRouteSignature,
+        totalDistanceMeters: route.totalDistanceMeters,
+        estimatedDurationSeconds: route.estimatedDurationSeconds,
+        isActive: route.isActive,
+        createdAt: route.createdAt,
+        updatedAt: route.updatedAt,
+    };
+};
