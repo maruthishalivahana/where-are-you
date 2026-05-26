@@ -301,6 +301,8 @@ export const batchTrackingService = {
                 timestamp: latestLocation.timestamp,
             };
 
+            logger.info('✅ Redis caching calls initiated');
+
             await Promise.all([
                 redisService.cacheDriverLocation(payload.driverId, cacheData),
                 redisService.cacheTripLocation(payload.tripId, {
@@ -326,6 +328,14 @@ export const batchTrackingService = {
                     payload.driverId
                 ),
             ]);
+
+            logger.info('✅ Redis caching completed', {
+                driverId: payload.driverId,
+                tripId: payload.tripId,
+                busId: payload.busId,
+                cachedLatitude: latestLocation.latitude,
+                cachedLongitude: latestLocation.longitude,
+            });
 
             // Broadcast location to passengers
             broadcastService.broadcastBusLocation(payload.tripId, {
