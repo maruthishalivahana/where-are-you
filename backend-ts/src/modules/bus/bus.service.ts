@@ -5,6 +5,7 @@ import { CreateBusInput } from './bus.validation';
 import { BUS_LIFECYCLE_STATUS } from '../../constants/busLifecycle';
 import { logger } from '../../utils/logger';
 import { tripService } from '../trip/trip.service';
+import { planService } from '../plan/plan.service';
 
 const getRouteDetails = (routeRef: unknown): { routeId: string | null; routeName: string | null } => {
     if (!routeRef) {
@@ -127,6 +128,8 @@ export const busService = {
         if (existingBus) {
             throw new Error('Bus with this number plate already exists in your organization');
         }
+
+        await planService.assertBusCapacity(organizationId);
 
         const route = await resolveRouteForAssignment(organizationId, {
             routeId: input.routeId,

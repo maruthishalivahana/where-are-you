@@ -1,4 +1,5 @@
 import axios from 'axios';
+import mongoose from 'mongoose';
 import { Route } from './route.model';
 import { ENV } from '../../config/env.config';
 import { Stop } from '../stop/stop.model';
@@ -571,9 +572,42 @@ export const routeService = {
         return formatRoute(prepared.route);
     },
 
-    getRoutes: async (organizationId: string) => {
-        const routes = await Route.find({ organizationId }).sort({ createdAt: -1 });
+    getRoutes: async (organizationId: string, search?: string) => {
+        const query = search?.trim();
+        const filter: Record<string, unknown> = { organizationId };
+
+        if (query) {
+            const orConditions: Record<string, unknown>[] = [
+                { name: { $regex: query, $options: 'i' } },
+                { startName: { $regex: query, $options: 'i' } },
+                { endName: { $regex: query, $options: 'i' } },
+            ];
+
+            if (mongoose.isValidObjectId(query)) {
+                orConditions.unshift({ _id: query });
+            }
+
+            filter.$or = orConditions;
+        }
+
+        const routes = await Route.find(filter).sort({ createdAt: -1 });
         return routes.map(formatRoute);
+    },
+
+    getRouteOptions: async (organizationId: string, search?: string) => {
+        const routes = await routeService.getRoutes(organizationId, search);
+
+        return routes.map((route) => ({
+            id: route.id,
+            name: route.name,
+            label: `${route.name} | ${route.startName} -> ${route.endName}`,
+            startName: route.startName,
+            endName: route.endName,
+            startLat: route.startLat,
+            startLng: route.startLng,
+            endLat: route.endLat,
+            endLng: route.endLng,
+        }));
     },
 
     getRouteById: async (organizationId: string, routeId: string) => {

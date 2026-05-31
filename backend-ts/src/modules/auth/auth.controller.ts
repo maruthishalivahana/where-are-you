@@ -76,7 +76,7 @@ export const authController = {
 
 	createUserByAdmin: async (req: Request, res: Response): Promise<void> => {
 		try {
-			const { name, memberId, email, phone, password } = req.body as CreateMemberInput;
+			const { name, memberId, routeId, email, phone, password } = req.body as CreateMemberInput;
 
 			if (!req.user?.organizationId) {
 				res.status(401).json({ message: 'Unauthorized' });
@@ -86,6 +86,7 @@ export const authController = {
 			const user = await authService.createUserByAdmin(req.user.organizationId, {
 				name,
 				memberId,
+				routeId,
 				email,
 				phone,
 				password,

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware';
 import { requireRole } from '../../middleware/role.middleware';
+import { requireActivePlan } from '../../middleware/plan.middleware';
 import { validate } from '../../middleware/validate.middleware';
 import { ROLES } from '../../constants/roles';
 import { stopController } from './stop.controller';
@@ -32,7 +33,7 @@ const updateStopSchema = z.object({
         }),
 });
 
-stopRouter.use(requireAuth, requireRole(ROLES.ADMIN));
+stopRouter.use(requireAuth, requireRole(ROLES.ADMIN), requireActivePlan);
 
 // Routes under /api/admin/routes/:routeId/stops
 stopRouter.post('/routes/:routeId/stops', validate(createStopSchema), stopController.createStop);

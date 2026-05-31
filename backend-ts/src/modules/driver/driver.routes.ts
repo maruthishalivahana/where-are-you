@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware';
 import { requireRole } from '../../middleware/role.middleware';
+import { requireActivePlan } from '../../middleware/plan.middleware';
 import { validate } from '../../middleware/validate.middleware';
 import { ROLES } from '../../constants/roles';
 import { driverController } from './driver.controller';
@@ -23,9 +24,10 @@ const updateDriverSchema = z.object({
 });
 
 // Admin routes
-driverRouter.get('/admin/all', requireAuth, requireRole(ROLES.ADMIN), driverController.listDrivers);
-driverRouter.put('/admin/:id', requireAuth, requireRole(ROLES.ADMIN), validate(updateDriverSchema), driverController.updateDriver);
-driverRouter.delete('/admin/:id', requireAuth, requireRole(ROLES.ADMIN), driverController.deleteDriver);
+driverRouter.use('/admin', requireAuth, requireRole(ROLES.ADMIN), requireActivePlan);
+driverRouter.get('/admin/all', driverController.listDrivers);
+driverRouter.put('/admin/:id', validate(updateDriverSchema), driverController.updateDriver);
+driverRouter.delete('/admin/:id', driverController.deleteDriver);
 
 // Driver routes (driver-only)
 driverRouter.get('/me', requireAuth, requireRole(ROLES.DRIVER), driverController.getMyDetails);

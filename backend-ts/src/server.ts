@@ -19,6 +19,7 @@ import { tripRouter } from './modules/trip/trip.routes';
 import { initSocket } from './websocket/socket.server';
 import { notificationRouter } from './modules/notification/notification.routes';
 import { routeDebugRouter } from './modules/route/route.debug.routes';
+import { planRouter } from './modules/plan/plan.routes';
 
 const app = express();
 
@@ -100,6 +101,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/admin/plans', planRouter);
 app.use('/api/buses', busRouter);
 app.use('/api/driver', driverRouter);
 app.use('/api/admin/routes', routeRouter);
@@ -138,6 +140,19 @@ connectDB()
 
         const port = Number(ENV.PORT) || 3000;
         const host = '0.0.0.0';
+
+        server.once('error', (error: NodeJS.ErrnoException) => {
+            if (error.code === 'EADDRINUSE') {
+                logger.error(
+                    `Port ${port} is already in use. Stop the existing process or set a different PORT in .env.`
+                );
+                process.exit(1);
+                return;
+            }
+
+            logger.error(`Server failed to start on http://${host}:${port}`, error);
+            process.exit(1);
+        });
 
         server.listen(port, host, () => {
             logger.info(`Server is running on http://${host}:${port}`);

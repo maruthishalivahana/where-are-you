@@ -4,6 +4,7 @@ import { requireRole } from '../../middleware/role.middleware';
 import { validate } from '../../middleware/validate.middleware';
 import { ROLES } from '../../constants/roles';
 import { authController } from './auth.controller';
+import { requireActivePlan } from '../../middleware/plan.middleware';
 import {
 	refreshTokenController,
 	logoutController,
@@ -28,8 +29,8 @@ authRouter.post('/logout/driver', requireAuth, requireRole(ROLES.DRIVER), logout
 // Debug route - check your token
 authRouter.get('/whoami', requireAuth, authDebugController.whoami);
 
-authRouter.post('/admin/users', requireAuth, requireRole(ROLES.ADMIN), validate(createMemberSchema), authController.createUserByAdmin);
-authRouter.post('/admin/drivers', requireAuth, requireRole(ROLES.ADMIN), validate(createMemberSchema), authController.createDriverByAdmin);
+authRouter.post('/admin/users', requireAuth, requireRole(ROLES.ADMIN), requireActivePlan, validate(createMemberSchema), authController.createUserByAdmin);
+authRouter.post('/admin/drivers', requireAuth, requireRole(ROLES.ADMIN), requireActivePlan, validate(createMemberSchema), authController.createDriverByAdmin);
 
 
 

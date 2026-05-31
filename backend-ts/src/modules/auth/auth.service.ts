@@ -2,10 +2,12 @@ import { Admin } from '../admin/admin.model';
 import { Driver } from '../driver/driver.model';
 import { Organization } from '../organization/organization.model';
 import { User } from '../user/user.model';
+import { Route } from '../route/route.model';
 import { ROLES } from '../../constants/roles';
 import { comparePassword } from '../../utils/comparePassword';
 import { generateTokens } from '../../utils/generateTokens';
 import { hashPassword } from '../../utils/hashPassword';
+import { planService } from '../plan/plan.service';
 
 interface AdminSignupInput {
 	name: string;
@@ -30,6 +32,7 @@ interface MemberLoginInput {
 interface CreateMemberInput {
 	name: string;
 	memberId: string;
+	routeId?: string;
 	email?: string;
 	phone?: string;
 	password: string;
@@ -91,6 +94,7 @@ export const authService = {
 					id: String(organization._id),
 					name: organization.name,
 					slug: organization.slug,
+					plan: await planService.getCurrentPlan(String(organization._id)),
 				},
 			},
 		};
@@ -132,6 +136,7 @@ export const authService = {
 					id: String(organization._id),
 					name: organization.name,
 					slug: organization.slug,
+					plan: await planService.getCurrentPlan(String(organization._id)),
 				},
 			},
 		};
@@ -203,6 +208,14 @@ export const authService = {
 	createUserByAdmin: async (organizationId: string, input: CreateMemberInput) => {
 		const normalizedEmail = input.email ? normalizeEmail(input.email) : undefined;
 		const normalizedPhone = input.phone ? normalizePhone(input.phone) : undefined;
+		const routeId = input.routeId?.trim();
+
+		if (routeId) {
+			const route = await Route.findOne({ _id: routeId, organizationId });
+			if (!route) {
+				throw new Error('Route not found');
+			}
+		}
 
 		const existingUser = await User.findOne({
 			organizationId,
@@ -237,6 +250,7 @@ export const authService = {
 			organizationId,
 			name: input.name.trim(),
 			memberId: input.memberId.trim(),
+			routeId: routeId ? routeId : undefined,
 			email: normalizedEmail,
 			phone: normalizedPhone,
 			passwordHash: await hashPassword(input.password),
@@ -246,6 +260,7 @@ export const authService = {
 			id: String(user._id),
 			name: user.name,
 			memberId: user.memberId,
+			routeId: user.routeId ? String(user.routeId) : null,
 			email: user.email || null,
 			phone: user.phone || null,
 		};

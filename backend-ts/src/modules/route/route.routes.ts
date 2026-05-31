@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware';
 import { requireRole } from '../../middleware/role.middleware';
+import { requireActivePlan } from '../../middleware/plan.middleware';
 import { validate } from '../../middleware/validate.middleware';
 import { ROLES } from '../../constants/roles';
 import { routeController } from './route.controller';
@@ -37,11 +38,12 @@ const updateRouteSchema = z.object({
         }),
 });
 
-routeRouter.use(requireAuth, requireRole(ROLES.ADMIN));
+routeRouter.use(requireAuth, requireRole(ROLES.ADMIN), requireActivePlan);
 
 routeRouter.post('/', validate(createRouteSchema), routeController.createRoute);
 routeRouter.post('/:routeId/recalculate-polyline', routeController.recalculateRoutePolyline);
 routeRouter.get('/', routeController.getRoutes);
+routeRouter.get('/options', routeController.getRouteOptions);
 routeRouter.get('/:routeId', routeController.getRouteById);
 routeRouter.put('/:routeId', validate(updateRouteSchema), routeController.updateRoute);
 routeRouter.delete('/:routeId', routeController.deleteRoute);

@@ -12,15 +12,21 @@ import { ENV } from '../../config/env.config';
 
 const toObjectId = (id: string) => new mongoose.Types.ObjectId(id);
 
-const formatUser = (user: InstanceType<typeof User>) => ({
-    id: String(user._id),
-    name: user.name,
-    memberId: user.memberId,
-    email: user.email || null,
-    phone: user.phone || null,
-    organizationId: String(user.organizationId),
-    createdAt: user.createdAt,
-});
+const formatUser = (user: any) => {
+    const route = user.routeId as any;
+
+    return {
+        id: String(user._id),
+        name: user.name,
+        memberId: user.memberId,
+        routeId: route ? String(route._id || route) : null,
+        routeName: route?.name || null,
+        email: user.email || null,
+        phone: user.phone || null,
+        organizationId: String(user.organizationId),
+        createdAt: user.createdAt,
+    };
+};
 
 const formatBusForClient = (bus: any, activeTrip: any) => {
     return {
@@ -50,12 +56,19 @@ export const userService = {
                     ],
                 }
                 : {}),
-        }).sort({ createdAt: -1 });
+        })
+            .populate('routeId', 'name')
+            .sort({ createdAt: -1 });
+
         return users.map(formatUser);
     },
 
     getUserById: async (organizationId: string, userId: string) => {
-        const user = await User.findOne({ _id: toObjectId(userId), organizationId: toObjectId(organizationId) });
+        const user = await User.findOne({
+            _id: toObjectId(userId),
+            organizationId: toObjectId(organizationId),
+        }).populate('routeId', 'name');
+
         if (!user) throw new Error('User not found');
         return formatUser(user);
     },
@@ -63,7 +76,7 @@ export const userService = {
     updateUser: async (
         organizationId: string,
         userId: string,
-        input: { name?: string; memberId?: string; email?: string; phone?: string; password?: string }
+        input: { name?: string; memberId?: string; routeId?: string; email?: string; phone?: string; password?: string }
     ) => {
         const user = await User.findOne({ _id: toObjectId(userId), organizationId: toObjectId(organizationId) });
         if (!user) throw new Error('User not found');
@@ -75,6 +88,11 @@ export const userService = {
                 _id: { $ne: toObjectId(userId) },
             });
             if (duplicate) throw new Error('memberId already in use');
+        }
+
+        if (input.routeId !== undefined && input.routeId) {
+            const route = await Route.findOne({ _id: toObjectId(input.routeId), organizationId: toObjectId(organizationId) });
+            if (!route) throw new Error('Route not found');
         }
 
         const normalizedEmail = input.email?.trim().toLowerCase();
@@ -100,11 +118,12 @@ export const userService = {
         const updates: Record<string, unknown> = {};
         if (input.name) updates.name = input.name.trim();
         if (input.memberId) updates.memberId = input.memberId.trim();
+        if (input.routeId !== undefined) updates.routeId = input.routeId ? toObjectId(input.routeId) : null;
         if (input.email !== undefined) updates.email = normalizedEmail || null;
         if (input.phone !== undefined) updates.phone = normalizedPhone || null;
         if (input.password) updates.passwordHash = await hashPassword(input.password);
 
-        const updated = await User.findByIdAndUpdate(userId, { $set: updates }, { new: true });
+        const updated = await User.findByIdAndUpdate(userId, { $set: updates }, { new: true }).populate('routeId', 'name');
         return formatUser(updated!);
     },
 
