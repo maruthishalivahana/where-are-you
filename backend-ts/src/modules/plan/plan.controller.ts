@@ -42,6 +42,34 @@ export const planController = {
         }
     },
 
+    getCapacityInfo: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.organizationId) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const capacity = await planService.getCapacityInfo(req.user.organizationId);
+            res.status(200).json({ capacity });
+        } catch (error) {
+            res.status(400).json({ message: getMessage(error) });
+        }
+    },
+
+    getPaymentHistory: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.organizationId) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const history = await planService.getPaymentHistory(req.user.organizationId);
+            res.status(200).json({ history });
+        } catch (error) {
+            res.status(400).json({ message: getMessage(error) });
+        }
+    },
+
     activatePlan: async (req: Request, res: Response): Promise<void> => {
         try {
             if (!req.user?.organizationId) {
@@ -50,14 +78,6 @@ export const planController = {
             }
 
             const planCode = String(req.body?.planCode || '').trim();
-            const busCountRaw = req.body?.busCount;
-            const busCount =
-                typeof busCountRaw === 'number'
-                    ? busCountRaw
-                    : typeof busCountRaw === 'string' && busCountRaw.trim().length > 0
-                        ? Number(busCountRaw)
-                        : undefined;
-
             if (!planCode) {
                 res.status(400).json({ message: 'planCode is required' });
                 return;
@@ -65,7 +85,6 @@ export const planController = {
 
             const currentPlan = await planService.activatePlan(req.user.organizationId, {
                 planCode,
-                busCount,
             });
 
             res.status(200).json({ currentPlan });

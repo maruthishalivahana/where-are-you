@@ -20,6 +20,8 @@ import { initSocket } from './websocket/socket.server';
 import { notificationRouter } from './modules/notification/notification.routes';
 import { routeDebugRouter } from './modules/route/route.debug.routes';
 import { planRouter } from './modules/plan/plan.routes';
+import { paymentRouter } from './modules/payment/payment.routes';
+import { paymentWebhookRouter } from './modules/payment/payment.webhook.routes';
 
 const app = express();
 
@@ -72,7 +74,14 @@ app.use(
     })
 );
 
-app.use(express.json({ limit: '1mb' }));
+app.use(
+    express.json({
+        limit: '1mb',
+        verify: (req, _res, buf) => {
+            (req as any).rawBody = buf;
+        },
+    })
+);
 app.use(cookieParser());
 
 app.get('/', (_req, res) => {
@@ -102,6 +111,8 @@ app.use((req, res, next) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/admin/plans', planRouter);
+app.use('/api/admin/plans', paymentRouter);
+app.use('/api/webhooks', paymentWebhookRouter);
 app.use('/api/buses', busRouter);
 app.use('/api/driver', driverRouter);
 app.use('/api/admin/routes', routeRouter);

@@ -16,7 +16,7 @@ export const PLAN_CATALOG: PlanDefinition[] = [
         name: 'Monthly per bus',
         description: '1 month access per bus',
         durationDays: 30,
-        pricePerBus: 300,
+        pricePerBus: 1,
         isTrial: false,
     },
     {

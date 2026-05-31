@@ -60,6 +60,9 @@ export const ENV = {
     REDIS_PORT: parseNumber(process.env.REDIS_PORT, 6379),
     REDIS_PASSWORD: process.env.REDIS_PASSWORD,
     REDIS_DB: parseNumber(process.env.REDIS_DB, 0),
+    RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || '',
+    RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
+    RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET || '',
     FRONTEND_URLS: parseOrigins(),
     MOBILE_APP_ORIGINS: parseMobileOrigins(),
 };
