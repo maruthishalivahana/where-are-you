@@ -5,10 +5,17 @@ export interface IUser extends Document {
     name: string;
     memberId: string;    // unique per org, e.g. student ID or employee ID
     routeId?: mongoose.Types.ObjectId | null;
+    stopId?: mongoose.Types.ObjectId | null;
     email?: string;
     phone?: string;
     passwordHash: string;
     fcmToken: string;
+    notificationPreferences?: {
+        tripStartedEnabled?: boolean;
+        busNearStopEnabled?: boolean;
+        busArrivedEnabled?: boolean;
+        delayAlertsEnabled?: boolean;
+    };
     createdAt: Date;
 }
 
@@ -18,10 +25,17 @@ const UserSchema = new Schema<IUser>(
         name: { type: String, required: true },
         memberId: { type: String, required: true },
         routeId: { type: Schema.Types.ObjectId, ref: 'Route' },
+        stopId: { type: Schema.Types.ObjectId, ref: 'Stop' },
         email: { type: String, trim: true, lowercase: true },
         phone: { type: String, trim: true },
         passwordHash: { type: String, required: true },
         fcmToken: { type: String },
+        notificationPreferences: {
+            tripStartedEnabled: { type: Boolean, default: true },
+            busNearStopEnabled: { type: Boolean, default: true },
+            busArrivedEnabled: { type: Boolean, default: true },
+            delayAlertsEnabled: { type: Boolean, default: true },
+        },
     },
     { timestamps: { createdAt: true, updatedAt: false } }
 );

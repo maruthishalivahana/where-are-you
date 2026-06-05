@@ -6,6 +6,9 @@ import { Stop } from '../stop/stop.model';
 import { Notification } from './notification.model';
 import { User } from '../user/user.model';
 import { sendPushNotification } from '../../utils/sendPushNotification';
+import { messaging } from '../../config/fcm.config';
+import { DeviceToken } from './deviceToken.model';
+import { logger } from '../../utils/logger';
 
 const toObjectId = (id: string) => new mongoose.Types.ObjectId(id);
 const NEAR_STOP_COOLDOWN_MS = 5 * 60 * 1000;
@@ -196,5 +199,182 @@ export const notificationService = {
 			}
 		}
 	},
+
+	// FCM Device Token Management
+	registerDeviceToken: async (
+		userId: string,
+		deviceToken: string,
+		deviceType: 'ios' | 'android' | 'web'
+	) => {
+		try {
+			const existing = await DeviceToken.findOne({ deviceToken });
+
+			if (existing) {
+				if (existing.userId.toString() !== userId) {
+					(existing.userId as any) = toObjectId(userId);
+					existing.lastUsedAt = new Date();
+					await existing.save();
+				}
+				return true;
+			}
+
+			await DeviceToken.create({
+				userId: toObjectId(userId) as any,
+				deviceToken,
+				deviceType,
+				isActive: true,
+				lastUsedAt: new Date(),
+			});
+
+			logger.info(`Device token registered: ${userId}`);
+			return true;
+		} catch (error) {
+			logger.error('Error registering device token:', error);
+			return false;
+		}
+	},
+
+	deactivateDeviceToken: async (deviceToken: string) => {
+		try {
+			await DeviceToken.updateOne({ deviceToken }, { isActive: false });
+			logger.info(`Device token deactivated: ${deviceToken}`);
+			return true;
+		} catch (error) {
+			logger.error('Error deactivating device token:', error);
+			return false;
+		}
+	},
+
+	getUserDeviceTokens: async (userId: string): Promise<string[]> => {
+		try {
+			const tokens = await DeviceToken.find({
+				userId: toObjectId(userId),
+				isActive: true,
+			} as any).select('deviceToken');
+
+			return tokens.map((t) => t.deviceToken);
+		} catch (error) {
+			logger.error('Error fetching device tokens:', error);
+			return [];
+		}
+	},
+
+	// Send Notification via FCM with Deduplication
+	sendFCMNotification: async (input: {
+		organizationId: string;
+		userId: string;
+		busId: string;
+		tripId: string;
+		type: string;
+		title: string;
+		body: string;
+		voiceMessage: string;
+		isSticky?: boolean;
+		noSound?: boolean;
+	}) => {
+		try {
+			// Get device tokens
+			const deviceTokens = await notificationService.getUserDeviceTokens(input.userId);
+
+			if (deviceTokens.length === 0) {
+				logger.warn(`No device tokens found for user: ${input.userId}`);
+				return { success: false, error: 'No device tokens' };
+			}
+
+			// FCM message structure
+			const fcmMessage: any = {
+				notification: {
+					title: input.title,
+					body: input.body,
+				},
+				data: {
+					notificationType: input.type,
+					tripId: input.tripId,
+					busId: input.busId,
+					voiceMessage: input.voiceMessage,
+					isSticky: String(input.isSticky || false),
+					noSound: String(input.noSound || false),
+				},
+			};
+
+			// Add Android-specific configuration for sticky/silent notifications
+			if (input.noSound) {
+				fcmMessage.android = {
+					priority: 'high',
+					notification: {
+						sound: null,
+						channelId: 'driver_channel',
+						tag: input.tripId ? `trip_${input.tripId}` : 'driver_notification',
+					},
+				};
+			}
+
+			let successCount = 0;
+			let failureCount = 0;
+
+			for (const token of deviceTokens) {
+				try {
+					const messageId = await messaging.send({
+						...fcmMessage,
+						token,
+					});
+
+					successCount++;
+					logger.info(`FCM sent to device: ${messageId}`);
+				} catch (error) {
+					failureCount++;
+					logger.error(`FCM send failed for token ${token}:`, error);
+
+					if (error instanceof Error && error.message.includes('invalid registration id')) {
+						await notificationService.deactivateDeviceToken(token);
+					}
+				}
+			}
+
+			return {
+				success: successCount > 0,
+				successCount,
+				failureCount,
+			};
+		} catch (error) {
+			logger.error('Error in sendFCMNotification:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	},
+
+	// Get User Notification Preferences
+	getUserPreferences: async (userId: string) => {
+		try {
+			const user = await User.findById(userId).select('notificationPreferences');
+
+			if (!user?.notificationPreferences) {
+				return {
+					tripStartedEnabled: true,
+					busNearStopEnabled: true,
+					busArrivedEnabled: true,
+					delayAlertsEnabled: true,
+				};
+			}
+
+			return {
+				tripStartedEnabled: user.notificationPreferences.tripStartedEnabled ?? true,
+				busNearStopEnabled: user.notificationPreferences.busNearStopEnabled ?? true,
+				busArrivedEnabled: user.notificationPreferences.busArrivedEnabled ?? true,
+				delayAlertsEnabled: user.notificationPreferences.delayAlertsEnabled ?? true,
+			};
+		} catch (error) {
+			logger.error('Error fetching user preferences:', error);
+			return {
+				tripStartedEnabled: true,
+				busNearStopEnabled: true,
+				busArrivedEnabled: true,
+				delayAlertsEnabled: true,
+			};
+		}
+	},
 };
+
 

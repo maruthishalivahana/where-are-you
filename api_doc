@@ -1,0 +1,2033 @@
+# Where Are You - Backend API Reference Guide
+
+This document lists all available APIs from the backend system grouped logically. It contains endpoint details, authentication requirements, query parameters, request body structures, expected responses, and examples to facilitate testing in **Postman**.
+
+---
+
+## Global Configuration & Authentication
+
+### Base URL
+* **Development/Local**: `http://localhost:3000` (or as defined in your backend `.env` file)
+* **Production**: Target server base URL
+
+### Authentication Mechanisms
+1. **Bearer Token Authentication**:
+   * Header: `Authorization: Bearer <accessToken>`
+   * Required for most protected endpoints.
+2. **HTTP-only Cookies**:
+   * The backend sets two cookies upon successful login/signup: `accessToken` and `refreshToken`.
+   * Postman (or browser-based clients) will automatically include these cookies on subsequent requests.
+
+### Role Definitions
+* **`admin`**: Full control over organization, users, routes, buses, stops, and billing.
+* **`driver`**: Can view assigned bus/route and upload live location tracking coordinates.
+* **`user`**: Passenger role. Can search buses, view active trip ETAs, and subscribe to notifications.
+
+---
+
+## Table of Contents
+1. [System & Health Checks](#1-system--health-checks)
+2. [Authentication & Token Management](#2-authentication--token-management)
+3. [Admin - Plans & Subscription Management](#3-admin---plans--subscription-management)
+4. [Admin - Payment Gateway (Razorpay)](#4-admin---payment-gateway-razorpay)
+5. [Payment Webhooks](#5-payment-webhooks)
+6. [Admin - Bus Management](#6-admin---bus-management)
+7. [Admin - Driver Management](#7-admin---driver-management)
+8. [Admin - Route Management](#8-admin---route-management)
+9. [Admin - Stop Management](#9-admin---stop-management)
+10. [Admin - Passenger/User Management](#10-admin---passengeruser-management)
+11. [Driver App - Actions & GPS Tracking](#11-driver-app---actions--gps-tracking)
+12. [Passenger App - Search, Live Tracking & ETAs](#12-passenger-app---search-live-tracking--etas)
+13. [Push Notification & Device Management](#13-push-notification--device-management)
+14. [Route Debugging](#14-route-debugging)
+
+---
+
+## 1. System & Health Checks
+
+### Check Backend Status
+* **API**: `GET /`
+* **Description**: Simple endpoint to check if the backend service is up and running.
+* **Authentication**: None
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Request**:
+    ```http
+    GET / HTTP/1.1
+    Host: localhost:3000
+    ```
+  * **Response**:
+    ```json
+    {
+      "message": "Where Are You backend is running"
+    }
+    ```
+
+### Health Check Details
+* **API**: `GET /health`
+* **Description**: Retrieve backend uptime and system timestamp.
+* **Authentication**: None
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Request**:
+    ```http
+    GET /health HTTP/1.1
+    Host: localhost:3000
+    ```
+  * **Response**:
+    ```json
+    {
+      "status": "ok",
+      "uptimeSeconds": 3482,
+      "timestamp": "2026-06-04T16:15:30.000Z"
+    }
+    ```
+
+---
+
+## 2. Authentication & Token Management
+
+### Administrator Signup
+* **API**: `POST /api/auth/admin/signup`
+* **Description**: Create a new administrator account and initialize a new Organization. Also sets authentication cookies.
+* **Authentication**: None
+* **Body**:
+  ```json
+  {
+    "name": "John Doe",
+    "organizationName": "Transit Org",
+    "organizationSlug": "transit-org",
+    "email": "admin@transitorg.com",
+    "password": "securepassword123"
+  }
+  ```
+* **Response**: `201 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "admin": {
+        "id": "60d5ec4b1234567890123456",
+        "name": "John Doe",
+        "email": "admin@transitorg.com",
+        "organization": {
+          "id": "60d5ec4b1234567890123457",
+          "name": "Transit Org",
+          "slug": "transit-org",
+          "plan": {
+            "planCode": "free",
+            "active": true,
+            "status": "active"
+          }
+        }
+      },
+      "accessToken": "eyJhbGciOi...",
+      "refreshToken": "eyJhbGciOi..."
+    }
+    ```
+
+### Administrator Login
+* **API**: `POST /api/auth/admin/login`
+* **Description**: Authenticate an organization administrator and set authentication cookies.
+* **Authentication**: None
+* **Body**:
+  ```json
+  {
+    "email": "admin@transitorg.com",
+    "password": "securepassword123"
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "admin": {
+        "id": "60d5ec4b1234567890123456",
+        "name": "John Doe",
+        "email": "admin@transitorg.com",
+        "organization": {
+          "id": "60d5ec4b1234567890123457",
+          "name": "Transit Org",
+          "slug": "transit-org",
+          "plan": {
+            "planCode": "free",
+            "active": true,
+            "status": "active"
+          }
+        }
+      },
+      "accessToken": "eyJhbGciOi...",
+      "refreshToken": "eyJhbGciOi..."
+    }
+    ```
+
+### Member Login (Passenger or Driver)
+* **API**: `POST /api/auth/member/login`
+* **Description**: Authenticate a passenger (`user`) or a `driver` belonging to a specific organization using their custom member ID. Sets auth cookies.
+* **Authentication**: None
+* **Body**:
+  ```json
+  {
+    "role": "user", 
+    "memberId": "USR-1002",
+    "password": "passengerPassword123",
+    "organizationSlug": "transit-org"
+  }
+  ```
+  *(Change `"role"` to `"driver"` for driver login)*
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "member": {
+        "id": "60d5ec4b1234567890123488",
+        "role": "user",
+        "name": "Alice Smith",
+        "memberId": "USR-1002"
+      },
+      "accessToken": "eyJhbGciOi...",
+      "refreshToken": "eyJhbGciOi..."
+    }
+    ```
+
+### Refresh Token
+* **API**: `POST /api/auth/refresh`
+* **Description**: Generate a new access and refresh token. Postman will automatically send the `refreshToken` via cookie, or you can send it in the body.
+* **Authentication**: Cookie or Request Body (`refreshToken`)
+* **Body** *(Optional if cookie is present)*:
+  ```json
+  {
+    "refreshToken": "eyJhbGciOi..."
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "accessToken": "eyJhbGciOi-new-access-token",
+      "refreshToken": "eyJhbGciOi-new-refresh-token"
+    }
+    ```
+
+### Generic Logout
+* **API**: `POST /api/auth/logout`
+* **Description**: Log out the current user session by clearing all HTTP-only authentication cookies.
+* **Authentication**: None
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Logged out successfully"
+    }
+    ```
+
+### Passenger Logout
+* **API**: `POST /api/auth/logout/user`
+* **Description**: Log out passenger, automatically clear their FCM token, and clear authentication cookies.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "User logged out successfully"
+    }
+    ```
+
+### Driver Logout
+* **API**: `POST /api/auth/logout/driver`
+* **Description**: Log out driver, automatically turn off active GPS tracking flag, complete any active trip, and clear authentication cookies.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Driver logged out successfully"
+    }
+    ```
+
+### Check Auth Profile (whoami)
+* **API**: `GET /api/auth/whoami`
+* **Description**: Decodes and returns the JWT auth token payload currently stored in cookies or authorization headers. Highly useful for debugging session status.
+* **Authentication**: Bearer Token / Cookies (Any Role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Token decoded successfully",
+      "user": {
+        "sub": "60d5ec4b1234567890123456",
+        "organizationId": "60d5ec4b1234567890123457",
+        "role": "admin",
+        "iat": 1780582000,
+        "exp": 1780585600
+      }
+    }
+    ```
+
+### Create Passenger Account (Admin Only)
+* **API**: `POST /api/auth/admin/users`
+* **Description**: Organization administrators can create passenger/user profiles.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "name": "Jane User",
+    "memberId": "USR-1004",
+    "routeId": "60d5ec4b1234567890123499", 
+    "email": "jane@transitorg.com", 
+    "phone": "+919876543210", 
+    "password": "passengerPassword123"
+  }
+  ```
+  *(Note: `routeId`, `email`, and `phone` are optional)*
+* **Response**: `201 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "user": {
+        "id": "60d5ec4b1234567890123510",
+        "name": "Jane User",
+        "memberId": "USR-1004",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Route A-B",
+        "email": "jane@transitorg.com",
+        "phone": "+919876543210",
+        "organizationId": "60d5ec4b1234567890123457",
+        "createdAt": "2026-06-04T16:20:00.000Z"
+      }
+    }
+    ```
+
+### Create Driver Account (Admin Only)
+* **API**: `POST /api/auth/admin/drivers`
+* **Description**: Organization administrators can register driver profiles.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "name": "Mike Driver",
+    "memberId": "DRV-5001",
+    "email": "mike@transitorg.com", 
+    "phone": "+918765432109", 
+    "password": "driverPassword123"
+  }
+  ```
+  *(Note: `email` and `phone` are optional)*
+* **Response**: `201 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "driver": {
+        "id": "60d5ec4b1234567890123512",
+        "name": "Mike Driver",
+        "memberId": "DRV-5001",
+        "email": "mike@transitorg.com",
+        "phone": "+918765432109",
+        "organizationId": "60d5ec4b1234567890123457",
+        "createdAt": "2026-06-04T16:22:00.000Z"
+      }
+    }
+    ```
+
+---
+
+## 3. Admin - Plans & Subscription Management
+
+### List Subscription Plans (Catalog)
+* **API**: `GET /api/admin/plans`
+* **Description**: List all plans available in the system catalog (prices, resource limits, etc.).
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "plans": [
+        {
+          "code": "free",
+          "name": "Free Tier",
+          "description": "Basic tracking capability",
+          "monthlyPrice": 0,
+          "currency": "INR",
+          "active": true,
+          "isPaid": false,
+          "features": {
+            "maxBuses": 2,
+            "maxUsers": 50,
+            "maxDrivers": 2
+          }
+        },
+        {
+          "code": "growth_monthly",
+          "name": "Growth Plan (Monthly)",
+          "description": "Scalable tracking infrastructure",
+          "monthlyPrice": 499,
+          "currency": "INR",
+          "active": true,
+          "isPaid": true,
+          "features": {
+            "maxBuses": 10,
+            "maxUsers": 1000,
+            "maxDrivers": 10
+          }
+        }
+      ]
+    }
+    ```
+
+### Get Current Active Plan
+* **API**: `GET /api/admin/plans/current`
+* **Description**: Retrieve active plan settings and expiry timestamp for the administrator's organization.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "currentPlan": {
+        "planCode": "free",
+        "active": true,
+        "status": "active",
+        "busesCount": 1,
+        "expiresAt": "2026-07-04T16:15:00.000Z",
+        "features": {
+          "maxBuses": 2,
+          "maxUsers": 50,
+          "maxDrivers": 2
+        }
+      }
+    }
+    ```
+
+### Get Plan Summary & Usage
+* **API**: `GET /api/admin/plans/summary`
+* **Description**: Retrieve limits vs current usage counts (buses, drivers, passengers) for the organization.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "currentPlan": "free",
+      "limits": {
+        "maxBuses": 2,
+        "maxUsers": 50,
+        "maxDrivers": 2
+      },
+      "usage": {
+        "busesCount": 1,
+        "usersCount": 12,
+        "driversCount": 2
+      }
+    }
+    ```
+
+### Get Organization Capacity
+* **API**: `GET /api/admin/plans/capacity`
+* **Description**: Check if organization has leftover capacity to add resources like a bus, driver, or user under the current plan.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "capacity": {
+        "canAddBus": true,
+        "canAddDriver": false,
+        "canAddUser": true,
+        "limits": {
+          "maxBuses": 2,
+          "maxUsers": 50,
+          "maxDrivers": 2
+        },
+        "usage": {
+          "busesCount": 1,
+          "usersCount": 12,
+          "driversCount": 2
+        }
+      }
+    }
+    ```
+
+### Get Billing / Payment History
+* **API**: `GET /api/admin/plans/history`
+* **Description**: List details of past subscription activations and payments.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "history": [
+        {
+          "planCode": "free",
+          "amount": 0,
+          "currency": "INR",
+          "status": "paid",
+          "orderId": "manual_free_1717517000",
+          "paymentId": "manual_1717517000",
+          "activatedAt": "2026-06-04T15:47:00.000Z",
+          "expiresAt": "2036-06-04T15:47:00.000Z",
+          "activationSource": "manual"
+        }
+      ]
+    }
+    ```
+
+### Manually Activate Free Plan
+* **API**: `POST /api/admin/plans/activate`
+* **Description**: Activate a free catalog plan manually.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**:
+  ```json
+  {
+    "planCode": "free"
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "currentPlan": {
+        "planCode": "free",
+        "status": "active",
+        "active": true
+      }
+    }
+    ```
+
+---
+
+## 4. Admin - Payment Gateway (Razorpay)
+
+### Create Razorpay Order
+* **API**: `POST /api/admin/plans/razorpay/order`
+* **Description**: Generate a Razorpay order ID to begin a transaction for upgrading or renewing plans.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**:
+  ```json
+  {
+    "planCode": "growth_monthly",
+    "busCount": 5
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "order": {
+        "id": "order_OkLpQz12345678",
+        "entity": "order",
+        "amount": 249500,
+        "amount_paid": 0,
+        "amount_due": 249500,
+        "currency": "INR",
+        "receipt": "receipt_growth_monthly_1717518000",
+        "status": "created",
+        "attempts": 0,
+        "created_at": 1717518000
+      },
+      "keyId": "rzp_test_exampleKey123"
+    }
+    ```
+
+### Verify Razorpay Payment Signature
+* **API**: `POST /api/admin/plans/razorpay/verify`
+* **Description**: Submit Razorpay payment signature details for cryptographic verification. Once verified, the paid plan will activate automatically.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**:
+  ```json
+  {
+    "orderId": "order_OkLpQz12345678",
+    "paymentId": "pay_OkLpVerif98765",
+    "signature": "3c02978a6bc4d74c0b5c1a85ef987654a32b10cd56ef78ab..."
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "currentPlan": {
+        "planCode": "growth_monthly",
+        "active": true,
+        "status": "active",
+        "busesCount": 5,
+        "expiresAt": "2026-07-04T16:30:00.000Z"
+      }
+    }
+    ```
+
+### Get Razorpay Payment Status
+* **API**: `GET /api/admin/plans/razorpay/status`
+* **Description**: Read billing/payment registration state for a specific order.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Query Parameters**: `?orderId=order_OkLpQz12345678`
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "payment": {
+        "orderId": "order_OkLpQz12345678",
+        "status": "paid",
+        "planCode": "growth_monthly",
+        "busCount": 5,
+        "amount": 2495,
+        "currency": "INR",
+        "paymentId": "pay_OkLpVerif98765",
+        "paidAt": "2026-06-04T16:35:00.000Z",
+        "createdAt": "2026-06-04T16:30:00.000Z"
+      }
+    }
+    ```
+
+---
+
+## 5. Payment Webhooks
+
+### Razorpay Webhook Endpoint
+* **API**: `POST /api/webhooks/razorpay`
+* **Description**: Webhook listener for async Razorpay payment capture events. Parses payload, verifies authenticity, and registers the subscription status automatically.
+* **Authentication**: Razorpay webhook signature verified against `x-razorpay-signature` header.
+* **Body**: Raw Razorpay event payload
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "status": "ok"
+    }
+    ```
+
+---
+
+## 6. Admin - Bus Management
+
+### Add Bus
+* **API**: `POST /api/buses`
+* **Description**: Create a new bus inside the organization directory.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "numberPlate": "MH-12-PQ-9876",
+    "driverId": "60d5ec4b1234567890123512",
+    "routeId": "60d5ec4b1234567890123499"
+  }
+  ```
+  *(Note: `driverId` and `routeId` are optional)*
+* **Response**: `210 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "numberPlate": "MH-12-PQ-9876",
+        "status": "INACTIVE",
+        "driverId": "60d5ec4b1234567890123512",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Route A-B",
+        "organizationId": "60d5ec4b1234567890123457",
+        "currentLat": 0,
+        "currentLng": 0
+      }
+    }
+    ```
+
+### List Buses
+* **API**: `GET /api/buses`
+* **Description**: Retrieve list of all registered buses.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "buses": [
+        {
+          "id": "60d5ec4b1234567890123610",
+          "numberPlate": "MH-12-PQ-9876",
+          "status": "INACTIVE",
+          "driverId": "60d5ec4b1234567890123512",
+          "routeId": "60d5ec4b1234567890123499",
+          "routeName": "Route A-B"
+        }
+      ]
+    }
+    ```
+
+### Get Bus by ID
+* **API**: `GET /api/buses/:busId`
+* **Description**: Fetch profile of a specific bus.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "numberPlate": "MH-12-PQ-9876",
+        "status": "INACTIVE",
+        "driverId": "60d5ec4b1234567890123512",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Route A-B",
+        "currentLat": 0,
+        "currentLng": 0
+      }
+    }
+    ```
+
+### Assign/Update Driver for Bus
+* **API**: `PUT /api/buses/:busId/driver`
+* **Description**: Associate a driver profile with a bus. Must supply either `driverId` or the driver's custom `memberId`.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "driverId": "60d5ec4b1234567890123512"
+  }
+  ```
+  *(Or: `{"memberId": "DRV-5001"}`)*
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "numberPlate": "MH-12-PQ-9876",
+        "driverId": "60d5ec4b1234567890123512",
+        "status": "INACTIVE"
+      }
+    }
+    ```
+
+### Assign/Update Route for Bus
+* **API**: `PUT /api/buses/:busId/route`
+* **Description**: Assign a route to the bus. Must supply either `routeId` or the exact route `routeName`.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "routeId": "60d5ec4b1234567890123499"
+  }
+  ```
+  *(Or: `{"routeName": "Route A-B"}`)*
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "numberPlate": "MH-12-PQ-9876",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Route A-B",
+        "status": "INACTIVE"
+      }
+    }
+    ```
+
+### Delete Bus
+* **API**: `DELETE /api/buses/:busId`
+* **Description**: Remove a bus entry from the organization.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Bus deleted successfully"
+    }
+    ```
+
+---
+
+## 7. Admin - Driver Management
+
+### List Drivers (Admin View)
+* **API**: `GET /api/driver/admin/all`
+* **Description**: List drivers with search/filter query support.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Query Parameters**: `?q=search_term` *(Optional, matches driver name, memberId, email, phone)*
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "drivers": [
+        {
+          "id": "60d5ec4b1234567890123512",
+          "name": "Mike Driver",
+          "memberId": "DRV-5001",
+          "email": "mike@transitorg.com",
+          "phone": "+918765432109",
+          "organizationId": "60d5ec4b1234567890123457",
+          "isTracking": false
+        }
+      ]
+    }
+    ```
+
+### Update Driver Profile
+* **API**: `PUT /api/driver/admin/:id`
+* **Description**: Edit account parameters of a driver.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body** *(Supply at least one field)*:
+  ```json
+  {
+    "name": "Mike R. Driver",
+    "phone": "+918765432199",
+    "password": "newSecurePassword123"
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "driver": {
+        "id": "60d5ec4b1234567890123512",
+        "name": "Mike R. Driver",
+        "memberId": "DRV-5001",
+        "email": "mike@transitorg.com",
+        "phone": "+918765432199"
+      }
+    }
+    ```
+
+### Delete Driver
+* **API**: `DELETE /api/driver/admin/:id`
+* **Description**: Unregister and delete a driver.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Driver deleted successfully"
+    }
+    ```
+
+---
+
+## 8. Admin - Route Management
+
+### Create Route
+* **API**: `POST /api/admin/routes`
+* **Description**: Create a route with start/end coordinate markers. Will request directions API to compute baseline polyline, distances, and duration values.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "name": "Downtown Express",
+    "startName": "Central Hub",
+    "endName": "Metro Station",
+    "startLat": 17.3850,
+    "startLng": 78.4867,
+    "endLat": 17.4483,
+    "endLng": 78.3915
+  }
+  ```
+* **Response**: `201 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "route": {
+        "id": "60d5ec4b1234567890123499",
+        "name": "Downtown Express",
+        "startName": "Central Hub",
+        "endName": "Metro Station",
+        "startLat": 17.385,
+        "startLng": 78.4867,
+        "endLat": 17.4483,
+        "endLng": 78.3915,
+        "polyline": "a~_~FzvwzO...",
+        "totalDistanceMeters": 14200,
+        "estimatedDurationSeconds": 1800,
+        "isActive": true
+      }
+    }
+    ```
+
+### Recalculate Route Polyline
+* **API**: `POST /api/admin/routes/:routeId/recalculate-polyline`
+* **Description**: Force recalculation of route distance matrix, shape points, and duration estimate. Useful when route endpoints or stops are modified.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "route": {
+        "id": "60d5ec4b1234567890123499",
+        "name": "Downtown Express",
+        "totalDistanceMeters": 14500,
+        "estimatedDurationSeconds": 1920
+      }
+    }
+    ```
+
+### List Routes (Detailed)
+* **API**: `GET /api/admin/routes`
+* **Description**: Fetch all detailed route profiles.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Query Parameters**: `?q=search_term` *(Optional)*
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "routes": [
+        {
+          "id": "60d5ec4b1234567890123499",
+          "name": "Downtown Express",
+          "startName": "Central Hub",
+          "endName": "Metro Station",
+          "totalDistanceMeters": 14500,
+          "estimatedDurationSeconds": 1920,
+          "stopCount": 5
+        }
+      ]
+    }
+    ```
+
+### List Route Options (Minimal)
+* **API**: `GET /api/admin/routes/options`
+* **Description**: Retrieve simplified name-and-id mapping objects suitable for layout dropdown selectors.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Query Parameters**: `?q=search_term` *(Optional)*
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "routes": [
+        {
+          "id": "60d5ec4b1234567890123499",
+          "name": "Downtown Express"
+        }
+      ]
+    }
+    ```
+
+### Get Route by ID
+* **API**: `GET /api/admin/routes/:routeId`
+* **Description**: Fetch complete route configuration including encoded polylines, stops, and active parameters.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "id": "60d5ec4b1234567890123499",
+      "name": "Downtown Express",
+      "startName": "Central Hub",
+      "endName": "Metro Station",
+      "startLat": 17.385,
+      "startLng": 78.4867,
+      "endLat": 17.4483,
+      "endLng": 78.3915,
+      "polyline": "a~_~FzvwzO...",
+      "totalDistanceMeters": 14500,
+      "estimatedDurationSeconds": 1920,
+      "stops": [
+        {
+          "id": "60d5ec4b1234567890123712",
+          "name": "Midpoint Junction",
+          "latitude": 17.410,
+          "longitude": 78.432,
+          "sequenceOrder": 1,
+          "radiusMeters": 150
+        }
+      ]
+    }
+    ```
+
+### Update Route
+* **API**: `PUT /api/admin/routes/:routeId`
+* **Description**: Edit parameters of an existing route.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body** *(At least one field is required)*:
+  ```json
+  {
+    "name": "Downtown Express Updated",
+    "isActive": true
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "route": {
+        "id": "60d5ec4b1234567890123499",
+        "name": "Downtown Express Updated",
+        "isActive": true
+      }
+    }
+    ```
+
+### Delete Route
+* **API**: `DELETE /api/admin/routes/:routeId`
+* **Description**: Remove a route from database records.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Route deleted successfully"
+    }
+    ```
+
+---
+
+## 9. Admin - Stop Management
+
+### Create Stop
+* **API**: `POST /api/admin/routes/:routeId/stops`
+* **Description**: Define a new bus stop waypoint on a specific route.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "name": "Midpoint Junction",
+    "latitude": 17.4102,
+    "longitude": 78.4320,
+    "sequenceOrder": 1,
+    "radiusMeters": 150
+  }
+  ```
+  *(Note: `radiusMeters` represents geofence size, defaults to 150 if omitted)*
+* **Response**: `201 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "stop": {
+        "id": "60d5ec4b1234567890123712",
+        "routeId": "60d5ec4b1234567890123499",
+        "name": "Midpoint Junction",
+        "latitude": 17.4102,
+        "longitude": 78.432,
+        "sequenceOrder": 1,
+        "radiusMeters": 150,
+        "organizationId": "60d5ec4b1234567890123457"
+      }
+    }
+    ```
+
+### List Stops on a Route
+* **API**: `GET /api/admin/routes/:routeId/stops`
+* **Description**: Fetch all stops registered along a route, sorted by `sequenceOrder`.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "stops": [
+        {
+          "id": "60d5ec4b1234567890123712",
+          "name": "Midpoint Junction",
+          "latitude": 17.4102,
+          "longitude": 78.432,
+          "sequenceOrder": 1,
+          "radiusMeters": 150
+        }
+      ]
+    }
+    ```
+
+### Update Stop Details
+* **API**: `PUT /api/admin/stops/:id`
+* **Description**: Edit coordinate coordinates or properties of a specific stop.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body** *(At least one field is required)*:
+  ```json
+  {
+    "name": "Midpoint Junction East",
+    "radiusMeters": 200
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "stop": {
+        "id": "60d5ec4b1234567890123712",
+        "name": "Midpoint Junction East",
+        "latitude": 17.4102,
+        "longitude": 78.432,
+        "sequenceOrder": 1,
+        "radiusMeters": 200
+      }
+    }
+    ```
+
+### Delete Stop
+* **API**: `DELETE /api/admin/stops/:id`
+* **Description**: Delete a stop waypoint.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Stop deleted successfully"
+    }
+    ```
+
+---
+
+## 10. Admin - Passenger/User Management
+
+### List Passengers (Admin View)
+* **API**: `GET /api/admin/users`
+* **Description**: List all registered passengers with search query support.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Query Parameters**: `?q=search_term` *(Optional)*
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "users": [
+        {
+          "id": "60d5ec4b1234567890123488",
+          "name": "Alice Smith",
+          "memberId": "USR-1002",
+          "routeId": "60d5ec4b1234567890123499",
+          "routeName": "Downtown Express",
+          "email": "alice@transitorg.com",
+          "phone": "+919988776655",
+          "organizationId": "60d5ec4b1234567890123457",
+          "createdAt": "2026-06-04T16:00:00.000Z"
+        }
+      ]
+    }
+    ```
+
+### Get Passenger Details by ID
+* **API**: `GET /api/admin/users/:id`
+* **Description**: Fetch detailed profile of a passenger.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "user": {
+        "id": "60d5ec4b1234567890123488",
+        "name": "Alice Smith",
+        "memberId": "USR-1002",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Downtown Express",
+        "email": "alice@transitorg.com",
+        "phone": "+919988776655",
+        "organizationId": "60d5ec4b1234567890123457",
+        "createdAt": "2026-06-04T16:00:00.000Z"
+      }
+    }
+    ```
+
+### Update Passenger Profile
+* **API**: `PUT /api/admin/users/:id`
+* **Description**: Update profile parameters of a passenger.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**:
+  ```json
+  {
+    "name": "Alice M. Smith",
+    "routeId": "60d5ec4b1234567890123499"
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "user": {
+        "id": "60d5ec4b1234567890123488",
+        "name": "Alice M. Smith",
+        "memberId": "USR-1002",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Downtown Express",
+        "email": "alice@transitorg.com",
+        "phone": "+919988776655",
+        "organizationId": "60d5ec4b1234567890123457"
+      }
+    }
+    ```
+
+### Delete Passenger Account
+* **API**: `DELETE /api/admin/users/:id`
+* **Description**: Remove a passenger account.
+* **Authentication**: Bearer Token / Cookies (`admin` role, active organization plan required)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "User deleted successfully"
+    }
+    ```
+
+---
+
+## 11. Driver App - Actions & GPS Tracking
+
+### Get My Driver Profile
+* **API**: `GET /api/driver/me`
+* **Description**: Retrieve profile information of the authenticated driver.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "id": "60d5ec4b1234567890123512",
+      "name": "Mike Driver",
+      "memberId": "DRV-5001",
+      "email": "mike@transitorg.com",
+      "phone": "+918765432109",
+      "isTracking": false,
+      "organizationId": "60d5ec4b1234567890123457"
+    }
+    ```
+
+### Get My Assigned Bus
+* **API**: `GET /api/driver/my-bus`
+* **Description**: Retrieve bus mapping assigned to this driver.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "numberPlate": "MH-12-PQ-9876",
+        "status": "INACTIVE",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Downtown Express"
+      }
+    }
+    ```
+
+### Get My Assigned Route
+* **API**: `GET /api/driver/my-route`
+* **Description**: Retrieve routing geometry and stops list mapped to this driver's bus.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "route": {
+        "id": "60d5ec4b1234567890123499",
+        "name": "Downtown Express",
+        "startName": "Central Hub",
+        "endName": "Metro Station",
+        "startLat": 17.385,
+        "startLng": 78.4867,
+        "endLat": 17.4483,
+        "endLng": 78.3915,
+        "totalDistanceMeters": 14500,
+        "estimatedDurationSeconds": 1920
+      },
+      "stops": [
+        {
+          "id": "60d5ec4b1234567890123712",
+          "name": "Midpoint Junction",
+          "latitude": 17.4102,
+          "longitude": 78.432,
+          "sequenceOrder": 1,
+          "radiusMeters": 150
+        }
+      ]
+    }
+    ```
+
+### Start Live Tracking Session
+* **API**: `POST /api/driver/tracking/start`
+* **Description**: Start the active trip tracking session for the driver. Marks bus status as `ACTIVE` and creates a new Trip entry.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Tracking started successfully",
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "numberPlate": "MH-12-PQ-9876",
+        "status": "ACTIVE"
+      },
+      "trip": {
+        "id": "60d5ec4b1234567890123800",
+        "status": "EN_ROUTE",
+        "startedAt": "2026-06-04T16:45:00.000Z"
+      }
+    }
+    ```
+
+### Stop Live Tracking Session
+* **API**: `POST /api/driver/tracking/stop`
+* **Description**: Stop tracking session. Marks bus status as `INACTIVE` and closes out/completes the active Trip entry.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Tracking stopped successfully",
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "status": "INACTIVE"
+      },
+      "trip": {
+        "id": "60d5ec4b1234567890123800",
+        "status": "COMPLETED",
+        "endedAt": "2026-06-04T16:50:00.000Z"
+      }
+    }
+    ```
+
+### Upload GPS Telemetry Batch (High Performance)
+* **API**: `POST /api/tracking/batch`
+* **Description**: Production endpoint for GPS batch uploads from mobile client. Features cryptographic replay protection (via nonce), spoofing checks, and Redis telemetry cache writes with immediate socket publication. Rate limit is capped at 10 batches per minute.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**:
+  ```json
+  {
+    "tripId": "60d5ec4b1234567890123800",
+    "driverId": "60d5ec4b1234567890123512",
+    "busId": "60d5ec4b1234567890123610",
+    "batchTimestamp": "2026-06-04T16:46:15.000Z",
+    "nonce": "nonce_unique_req_uuid_998877",
+    "locations": [
+      {
+        "latitude": 17.3912,
+        "longitude": 78.4720,
+        "speed": 40.5,
+        "heading": 120,
+        "accuracy": 8,
+        "batteryLevel": 85,
+        "timestamp": "2026-06-04T16:46:00.000Z"
+      },
+      {
+        "latitude": 17.3948,
+        "longitude": 78.4680,
+        "speed": 42.0,
+        "heading": 115,
+        "accuracy": 6,
+        "batteryLevel": 84,
+        "timestamp": "2026-06-04T16:46:10.000Z"
+      }
+    ]
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "processedCount": 2,
+      "validCount": 2,
+      "invalidCount": 0,
+      "duplicateCount": 0,
+      "cacheUpdated": true,
+      "rateLimit": {
+        "remaining": 9,
+        "resetIn": 45
+      },
+      "nextExpectedBatch": "2026-06-04T16:46:30.000Z"
+    }
+    ```
+
+### Upload Single/Batch Location (Legacy / Deprecated)
+* **API**: `POST /api/tracking/me/location`
+* **Description**: Legacy endpoint for uploading coordinates one point at a time.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**:
+  ```json
+  {
+    "latitude": 17.3912,
+    "longitude": 78.4720,
+    "speed": 40.5,
+    "heading": 120,
+    "timestamp": "2026-06-04T16:46:00.000Z"
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "location": {
+        "_id": "60d5ec4b1234567890123899",
+        "driverId": "60d5ec4b1234567890123512",
+        "busId": "60d5ec4b1234567890123610",
+        "tripId": "60d5ec4b1234567890123800",
+        "latitude": 17.3912,
+        "longitude": 78.472,
+        "speed": 40.5,
+        "heading": 120,
+        "timestamp": "2026-06-04T16:46:00.000Z"
+      }
+    }
+    ```
+
+### Read Cached Driver Location
+* **API**: `GET /api/tracking/driver/:driverId/location`
+* **Description**: Retrieve current location coordinates for a driver from Redis cache (fallback to database if cache misses).
+* **Authentication**: Bearer Token / Cookies
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "source": "cache",
+      "driverId": "60d5ec4b1234567890123512",
+      "latitude": 17.3948,
+      "longitude": 78.468,
+      "speed": 42,
+      "heading": 115,
+      "accuracy": 6,
+      "timestamp": "2026-06-04T16:46:10.000Z"
+    }
+    ```
+
+### Read Cached Trip Location
+* **API**: `GET /api/tracking/trip/:tripId/location`
+* **Description**: Retrieve current active bus location on a specific trip from Redis cache or database.
+* **Authentication**: Bearer Token / Cookies
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "source": "cache",
+      "tripId": "60d5ec4b1234567890123800",
+      "latitude": 17.3948,
+      "longitude": 78.468,
+      "speed": 42,
+      "heading": 115,
+      "accuracy": 6,
+      "timestamp": "2026-06-04T16:46:10.000Z"
+    }
+    ```
+
+### Read Cached Bus Location
+* **API**: `GET /api/tracking/bus/:busId/location`
+* **Description**: Retrieve current bus coordinates from Redis cache.
+* **Authentication**: Bearer Token / Cookies
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "source": "cache",
+      "busId": "60d5ec4b1234567890123610",
+      "latitude": 17.3948,
+      "longitude": 78.468,
+      "speed": 42,
+      "heading": 115,
+      "accuracy": 6,
+      "timestamp": "2026-06-04T16:46:10.000Z"
+    }
+    ```
+
+### Get My Active Trip Profile
+* **API**: `GET /api/trip/active`
+* **Description**: Retrieve active trip details assigned to this driver.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "trip": {
+        "id": "60d5ec4b1234567890123800",
+        "status": "EN_ROUTE",
+        "startedAt": "2026-06-04T16:45:00.000Z",
+        "currentLocation": {
+          "latitude": 17.3948,
+          "longitude": 78.468
+        }
+      }
+    }
+    ```
+
+### Start Trip Session (Alternative Call)
+* **API**: `POST /api/trip/start`
+* **Description**: Alternative endpoint to start a trip session.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `201 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "trip": {
+        "id": "60d5ec4b1234567890123800",
+        "status": "EN_ROUTE",
+        "startedAt": "2026-06-04T16:45:00.000Z"
+      }
+    }
+    ```
+
+### Stop Trip Session (Alternative Call)
+* **API**: `POST /api/trip/stop`
+* **Description**: Alternative endpoint to complete/close out a trip session.
+* **Authentication**: Bearer Token / Cookies (`driver` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "trip": {
+        "id": "60d5ec4b1234567890123800",
+        "status": "COMPLETED",
+        "endedAt": "2026-06-04T16:50:00.000Z"
+      }
+    }
+    ```
+
+---
+
+## 12. Passenger App - Search, Live Tracking & ETAs
+
+### Get Active Trip Tracking Data (Automatic Flow)
+* **API**: `GET /api/user/tracking/active-trip`
+* **Description**: Primary endpoint for automatic tracking flow. Resolves passenger's assigned route, checks for active trip, and returns route details, stop schedule, active trip, bus info, and driver details in one single payload. Ready for Socket.io room joining.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "message": "Active trip found",
+      "data": {
+        "route": {
+          "id": "60d5ec4b1234567890123499",
+          "name": "Downtown Express",
+          "startName": "Central Hub",
+          "endName": "Metro Station",
+          "startLat": 17.385,
+          "startLng": 78.4867,
+          "endLat": 17.4483,
+          "endLng": 78.3915,
+          "encodedPolyline": "a~_~FzvwzO...",
+          "totalDistanceMeters": 14500,
+          "estimatedDurationSeconds": 1920
+        },
+        "stops": [
+          {
+            "id": "60d5ec4b1234567890123712",
+            "name": "Midpoint Junction",
+            "latitude": 17.4102,
+            "longitude": 78.432,
+            "sequenceOrder": 1,
+            "radiusMeters": 150
+          }
+        ],
+        "trip": {
+          "id": "60d5ec4b1234567890123800",
+          "status": "EN_ROUTE",
+          "startedAt": "2026-06-04T16:45:00.000Z",
+          "currentLocation": {
+            "latitude": 17.3948,
+            "longitude": 78.468
+          },
+          "createdAt": "2026-06-04T16:45:00.000Z"
+        },
+        "bus": {
+          "id": "60d5ec4b1234567890123610",
+          "numberPlate": "MH-12-PQ-9876",
+          "status": "ACTIVE"
+        },
+        "driver": {
+          "id": "60d5ec4b1234567890123512",
+          "name": "Mike Driver",
+          "memberId": "DRV-5001",
+          "phone": "+918765432109"
+        }
+      }
+    }
+    ```
+
+### Search Buses
+* **API**: `GET /api/user/buses/search`
+* **Description**: Search for organization buses by partial number plate match.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Query Parameters**: `?numberPlate=MH-12` *(Required)*
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "buses": [
+        {
+          "id": "60d5ec4b1234567890123610",
+          "numberPlate": "MH-12-PQ-9876",
+          "status": "ACTIVE",
+          "tripStatus": "EN_ROUTE",
+          "currentLat": 17.3948,
+          "currentLng": 78.468,
+          "lastUpdated": "2026-06-04T16:46:10.000Z",
+          "routeId": "60d5ec4b1234567890123499",
+          "routeName": "Downtown Express",
+          "route": {
+            "id": "60d5ec4b1234567890123499",
+            "name": "Downtown Express"
+          }
+        }
+      ]
+    }
+    ```
+
+### Read Live Bus Tracking & ETA Snapshots
+* **API**: `GET /api/user/buses/:busId/live`
+* **Description**: Get live geographic coordinates, complete ETA calculation snapshot relative to each stop along the route, and distance metrics.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "bus": {
+        "id": "60d5ec4b1234567890123610",
+        "numberPlate": "MH-12-PQ-9876",
+        "status": "ACTIVE",
+        "tripStatus": "EN_ROUTE",
+        "currentLat": 17.3948,
+        "currentLng": 78.468,
+        "lastUpdated": "2026-06-04T16:46:10.000Z",
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Downtown Express"
+      },
+      "route": {
+        "id": "60d5ec4b1234567890123499",
+        "name": "Downtown Express",
+        "startName": "Central Hub",
+        "endName": "Metro Station",
+        "startLat": 17.385,
+        "startLng": 78.4867,
+        "endLat": 17.4483,
+        "endLng": 78.3915,
+        "encodedPolyline": "a~_~FzvwzO...",
+        "totalDistanceMeters": 14500,
+        "totalDistanceText": "14.5 km",
+        "estimatedDurationSeconds": 1920,
+        "estimatedDurationText": "32 mins",
+        "etaToDestinationSeconds": 980,
+        "etaToDestinationText": "16 mins",
+        "distanceToDestinationMeters": 6800,
+        "distanceToDestinationText": "6.8 km",
+        "averageSpeedKmph": 25.4
+      },
+      "stops": [
+        {
+          "id": "60d5ec4b1234567890123712",
+          "name": "Midpoint Junction",
+          "latitude": 17.4102,
+          "longitude": 78.432,
+          "sequenceOrder": 1,
+          "etaSeconds": 320,
+          "etaText": "5 mins",
+          "distanceToStopMeters": 2100,
+          "distanceToStopText": "2.1 km",
+          "isPassed": false
+        }
+      ]
+    }
+    ```
+
+### Subscribe to Bus Alerts
+* **API**: `POST /api/user/subscriptions`
+* **Description**: Create or update subscriber notifications trigger rule for a bus, such as getting notified when a bus starts, or when it enters the radius of a specific stop.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**:
+  ```json
+  {
+    "busId": "60d5ec4b1234567890123610",
+    "stopId": "60d5ec4b1234567890123712",
+    "notifyOnBusStart": true,
+    "notifyOnNearStop": true,
+    "userLatitude": 17.4105,
+    "userLongitude": 78.4318,
+    "nearRadiusMeters": 150
+  }
+  ```
+  *(Note: `stopId`, `userLatitude`, `userLongitude`, and `nearRadiusMeters` are optional)*
+* **Response**: `201 Created`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "subscription": {
+        "id": "60d5ec4b1234567890123901",
+        "busId": "60d5ec4b1234567890123610",
+        "stop": {
+          "id": "60d5ec4b1234567890123712",
+          "name": "Midpoint Junction",
+          "latitude": 17.4102,
+          "longitude": 78.432,
+          "sequenceOrder": 1,
+          "radiusMeters": 150
+        },
+        "notifyOnBusStart": true,
+        "notifyOnNearStop": true,
+        "userLatitude": 17.4105,
+        "userLongitude": 78.4318,
+        "nearRadiusMeters": 150,
+        "isActive": true
+      }
+    }
+    ```
+
+### List My Bus Subscriptions
+* **API**: `GET /api/user/subscriptions`
+* **Description**: Retrieve active bus subscription alerts profiles for the authenticated user.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "subscriptions": [
+        {
+          "id": "60d5ec4b1234567890123901",
+          "bus": {
+            "id": "60d5ec4b1234567890123610",
+            "numberPlate": "MH-12-PQ-9876",
+            "status": "ACTIVE"
+          },
+          "stop": {
+            "id": "60d5ec4b1234567890123712",
+            "name": "Midpoint Junction",
+            "latitude": 17.4102,
+            "longitude": 78.432,
+            "sequenceOrder": 1,
+            "radiusMeters": 150
+          },
+          "notifyOnBusStart": true,
+          "notifyOnNearStop": true,
+          "userLatitude": 17.4105,
+          "userLongitude": 78.4318,
+          "nearRadiusMeters": 150,
+          "isActive": true
+        }
+      ]
+    }
+    ```
+
+### Unsubscribe from Bus Alerts
+* **API**: `DELETE /api/user/subscriptions/:subscriptionId`
+* **Description**: Deactivate/delete a specific bus alert subscription.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "message": "Subscription removed successfully"
+    }
+    ```
+
+### Get Available Passenger Routes
+* **API**: `GET /api/user/routes`
+* **Description**: Retrieve passenger-accessible list of all routes with stop counts.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "data": [
+        {
+          "id": "60d5ec4b1234567890123499",
+          "name": "Downtown Express",
+          "description": "Peak hour downtown express line",
+          "stopCount": 5
+        }
+      ]
+    }
+    ```
+
+### Get Passenger Route Stops
+* **API**: `GET /api/user/routes/:routeId/stops`
+* **Description**: Read stops list layout structure along a route for passenger references.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "data": [
+        {
+          "id": "60d5ec4b1234567890123712",
+          "name": "Midpoint Junction",
+          "latitude": 17.4102,
+          "longitude": 78.432,
+          "sequenceOrder": 1
+        }
+      ]
+    }
+    ```
+
+### Assign Pickup Stop
+* **API**: `POST /api/user/profile/assigned-stop`
+* **Description**: Set passenger profile route and custom pickup stop location details.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**:
+  ```json
+  {
+    "routeId": "60d5ec4b1234567890123499",
+    "stopId": "60d5ec4b1234567890123712"
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "message": "Stop assigned successfully",
+      "data": {
+        "userId": "60d5ec4b1234567890123488",
+        "routeId": "60d5ec4b1234567890123499",
+        "stopId": "60d5ec4b1234567890123712"
+      }
+    }
+    ```
+
+### Get My Assigned Pickup Stop
+* **API**: `GET /api/user/profile/assigned-stop`
+* **Description**: Read passenger's assigned pickup stop configuration.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "routeId": "60d5ec4b1234567890123499",
+        "routeName": "Downtown Express",
+        "stopId": "60d5ec4b1234567890123712",
+        "stopName": "Midpoint Junction",
+        "stopLatitude": 17.4102,
+        "stopLongitude": 78.432,
+        "stopSequence": 1
+      }
+    }
+    ```
+
+---
+
+## 13. Push Notification & Device Management
+
+### Register FCM Device Token
+* **API**: `POST /api/notifications/register-device`
+* **Description**: Associate active FCM token parameters with the current device. Supported systems: iOS, Android, Web.
+* **Authentication**: Bearer Token / Cookies (Any authenticated user)
+* **Body**:
+  ```json
+  {
+    "deviceToken": "fcm_device_token_string_example_123...",
+    "deviceType": "android"
+  }
+  ```
+  *(deviceType must be: `"ios"`, `"android"`, or `"web"`)*
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "message": "Device token registered successfully"
+    }
+    ```
+
+### Update FCM Token (Alternative Call)
+* **API**: `PATCH /api/user/profile/fcm-token`
+* **Description**: Alternative patch API to set FCM device token for passengers.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**:
+  ```json
+  {
+    "fcmToken": "fcm_device_token_string_example_123..."
+  }
+  ```
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "user": {
+        "id": "60d5ec4b1234567890123488",
+        "memberId": "USR-1002",
+        "fcmToken": "fcm_device_token_string_example_123..."
+      }
+    }
+    ```
+
+### Retrieve Notification Preferences
+* **API**: `GET /api/notifications/preferences`
+* **Description**: Read push settings profile (active notifications triggers configured for the user account).
+* **Authentication**: Bearer Token / Cookies (Any authenticated user)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "userId": "60d5ec4b1234567890123488",
+        "notifyOnBusStart": true,
+        "notifyOnNearStop": true,
+        "nearRadiusMeters": 150
+      }
+    }
+    ```
+
+### Fetch Notification History
+* **API**: `GET /api/user/notifications`
+* **Description**: Read push alerts delivery history entries for user profile.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "notifications": [
+        {
+          "id": "60d5ec4b1234567890124001",
+          "title": "Bus MH-12-PQ-9876 Started",
+          "body": "Your assigned bus has started its trip.",
+          "isRead": false,
+          "type": "BUS_START",
+          "data": {
+            "busId": "60d5ec4b1234567890123610",
+            "tripId": "60d5ec4b1234567890123800"
+          },
+          "createdAt": "2026-06-04T16:45:05.000Z"
+        }
+      ]
+    }
+    ```
+
+### Mark Notification as Read
+* **API**: `PATCH /api/user/notifications/:notificationId/read`
+* **Description**: Set read flag for a notification in history list.
+* **Authentication**: Bearer Token / Cookies (`user` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "notification": {
+        "id": "60d5ec4b1234567890124001",
+        "title": "Bus MH-12-PQ-9876 Started",
+        "body": "Your assigned bus has started its trip.",
+        "isRead": true
+      }
+    }
+    ```
+
+---
+
+## 14. Route Debugging
+
+### Debug Route Payload by ID
+* **API**: `GET /api/debug/routes/:id`
+* **Description**: Dump extensive routing parameters, calculated points, polyline structures, and database states. Useful for technical diagnosis.
+* **Authentication**: Bearer Token / Cookies (`admin` role)
+* **Body**: None
+* **Response**: `200 OK`
+* **Example**:
+  * **Response**:
+    ```json
+    {
+      "_id": "60d5ec4b1234567890123499",
+      "name": "Downtown Express",
+      "polyline": "a~_~FzvwzO...",
+      "stops": [
+        "60d5ec4b1234567890123712"
+      ],
+      "organizationId": "60d5ec4b1234567890123457",
+      "__v": 0
+    }
+    ```

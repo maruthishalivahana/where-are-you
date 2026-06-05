@@ -572,4 +572,121 @@ export const userService = {
             message: trip ? 'Active trip found' : 'No active trip at the moment',
         };
     },
+
+    /**
+     * Get available routes for user to select (showing with stop count)
+     */
+    getAvailableRoutes: async (organizationId: string) => {
+        const routes = await Route.find({
+            organizationId: toObjectId(organizationId),
+        })
+            .select('_id name description')
+            .populate('stops', '_id name')
+            .sort({ name: 1 });
+
+        // Get stop counts for each route
+        const routeIds = routes.map(r => r._id);
+        const stopCounts = await Stop.aggregate([
+            { $match: { routeId: { $in: routeIds } } },
+            { $group: { _id: '$routeId', count: { $sum: 1 } } },
+        ]);
+
+        const stopCountMap = new Map(stopCounts.map((sc: any) => [sc._id.toString(), sc.count]));
+        return routes.map((route: any) => ({
+            id: String(route._id),
+            name: route.name,
+            description: route.description,
+            stopCount: stopCountMap.get(route._id.toString()) || 0,
+        }));
+    },
+
+    /**
+     * Get stops for a specific route
+     */
+    getRouteStops: async (organizationId: string, routeId: string) => {
+        // Validate route exists
+        const route = await Route.findOne({
+            _id: toObjectId(routeId),
+            organizationId: toObjectId(organizationId),
+        });
+
+        if (!route) throw new Error('Route not found');
+
+        // Get stops for this route
+        const stops = await Stop.find({
+            routeId: toObjectId(routeId),
+            organizationId: toObjectId(organizationId),
+        }).sort({ sequenceOrder: 1 });
+
+        return stops.map((stop: any) => ({
+            id: String(stop._id),
+            name: stop.name,
+            latitude: stop.latitude,
+            longitude: stop.longitude,
+            sequenceOrder: stop.sequenceOrder,
+        }));
+    },
+
+    /**
+     * Assign stop to user (select their pickup stop)
+     */
+    assignStop: async (userId: string, organizationId: string, routeId: string, stopId: string) => {
+        const user = await User.findOne({
+            _id: toObjectId(userId),
+            organizationId: toObjectId(organizationId),
+        });
+
+        if (!user) throw new Error('User not found');
+
+        // Validate route exists and belongs to org
+        const route = await Route.findOne({
+            _id: toObjectId(routeId),
+            organizationId: toObjectId(organizationId),
+        });
+
+        if (!route) throw new Error('Route not found');
+
+        // Validate stop exists and belongs to route
+        const stop = await Stop.findOne({
+            _id: toObjectId(stopId),
+            routeId: toObjectId(routeId),
+            organizationId: toObjectId(organizationId),
+        });
+
+        if (!stop) throw new Error('Stop not found');
+
+        // Update user with route and stop
+        user.routeId = toObjectId(routeId);
+        user.stopId = toObjectId(stopId);
+        await user.save();
+
+        return user;
+    },
+
+    /**
+     * Get user's assigned stop with route details
+     */
+    getAssignedStop: async (userId: string, organizationId: string) => {
+        const user = await User.findOne({
+            _id: toObjectId(userId),
+            organizationId: toObjectId(organizationId),
+        })
+            .populate('routeId', 'name description')
+            .populate('stopId', 'name latitude longitude sequenceOrder');
+
+        if (!user) throw new Error('User not found');
+
+        const route = user.routeId as any;
+        const stop = user.stopId as any;
+
+        return {
+            routeId: route ? String(route._id) : null,
+            routeName: route?.name || null,
+            stopId: stop ? String(stop._id) : null,
+            stopName: stop?.name || null,
+            stopLatitude: stop?.latitude || null,
+            stopLongitude: stop?.longitude || null,
+            stopSequence: stop?.sequenceOrder || null,
+        };
+    },
 };

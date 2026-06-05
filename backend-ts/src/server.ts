@@ -18,6 +18,8 @@ import { trackingRouter } from './modules/tracking/tracking.routes';
 import { tripRouter } from './modules/trip/trip.routes';
 import { initSocket } from './websocket/socket.server';
 import { notificationRouter } from './modules/notification/notification.routes';
+import { deviceTokenRoutes } from './modules/notification/deviceToken.routes';
+import { initializeNotificationListeners } from './modules/notification/notification.events';
 import { routeDebugRouter } from './modules/route/route.debug.routes';
 import { planRouter } from './modules/plan/plan.routes';
 import { paymentRouter } from './modules/payment/payment.routes';
@@ -122,6 +124,7 @@ app.use('/api/tracking', trackingRouter);
 app.use('/api/trip', tripRouter);
 app.use('/api/user', userAppRouter);
 app.use('/api/user/notifications', notificationRouter);
+app.use('/api/notifications', deviceTokenRoutes);
 app.use('/api/debug', routeDebugRouter);
 
 app.use(notFoundHandler);
@@ -148,6 +151,9 @@ connectDB()
 
         const server = createServer(app);
         initSocket(server);
+
+        // Initialize notification event listeners
+        initializeNotificationListeners();
 
         const port = Number(ENV.PORT) || 3000;
         const host = '0.0.0.0';

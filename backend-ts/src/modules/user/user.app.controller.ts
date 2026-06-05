@@ -220,4 +220,138 @@ export const userAppController = {
             });
         }
     },
+
+    /**
+     * Get available routes for user to select
+     * GET /api/user/routes
+     */
+    getAvailableRoutes: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.organizationId) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const routes = await userService.getAvailableRoutes(req.user.organizationId);
+            res.status(200).json({
+                success: true,
+                data: routes,
+            });
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: getMessage(error),
+            });
+        }
+    },
+
+    /**
+     * Get stops for a specific route
+     * GET /api/user/routes/:routeId/stops
+     */
+    getRouteStops: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.organizationId) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const routeId = String(req.params.routeId).trim();
+            if (!routeId) {
+                res.status(400).json({ message: 'routeId is required' });
+                return;
+            }
+
+            const stops = await userService.getRouteStops(req.user.organizationId, routeId);
+            res.status(200).json({
+                success: true,
+                data: stops,
+            });
+        } catch (error) {
+            const message = getMessage(error);
+            const status = message === 'Route not found' ? 404 : 400;
+            res.status(status).json({
+                success: false,
+                message,
+            });
+        }
+    },
+
+    /**
+     * Assign stop to user
+     * POST /api/user/profile/assigned-stop
+     */
+    assignStop: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.organizationId || !req.user.sub) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const { routeId, stopId } = req.body;
+            if (!routeId || !stopId) {
+                res.status(400).json({
+                    message: 'routeId and stopId are required',
+                });
+                return;
+            }
+
+            const user = await userService.assignStop(
+                req.user.sub,
+                req.user.organizationId,
+                routeId,
+                stopId
+            );
+
+            res.status(200).json({
+                success: true,
+                message: 'Stop assigned successfully',
+                data: {
+                    userId: user._id,
+                    routeId: user.routeId,
+                    stopId: user.stopId,
+                },
+            });
+        } catch (error) {
+            const message = getMessage(error);
+            const status =
+                message === 'User not found' ||
+                message === 'Route not found' ||
+                message === 'Stop not found'
+                    ? 404
+                    : 400;
+            res.status(status).json({
+                success: false,
+                message,
+            });
+        }
+    },
+
+    /**
+     * Get user's assigned stop
+     * GET /api/user/profile/assigned-stop
+     */
+    getAssignedStop: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.organizationId || !req.user.sub) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const assignedStop = await userService.getAssignedStop(
+                req.user.sub,
+                req.user.organizationId
+            );
+
+            res.status(200).json({
+                success: true,
+                data: assignedStop,
+            });
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: getMessage(error),
+            });
+        }
+    },
 };
