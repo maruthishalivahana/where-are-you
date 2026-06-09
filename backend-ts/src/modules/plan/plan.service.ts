@@ -153,7 +153,23 @@ const getTotalActiveBusLimit = (subscriptionDocument: any) => {
 };
 
 export const planService = {
-    listPlans: async () => PLAN_CATALOG,
+    listPlans: async (organizationId?: string) => {
+        if (!organizationId) {
+            return PLAN_CATALOG;
+        }
+
+        // Check if free trial was ever used by this organization
+        const subscriptionDocument = await OrganizationPlanSubscription.findOne({ organizationId });
+        const hasUsedTrial = (subscriptionDocument?.activePlans || []).some(
+            (record: any) => record.activationSource === 'trial'
+        );
+
+        if (hasUsedTrial) {
+            return PLAN_CATALOG.filter((plan) => !plan.isTrial);
+        }
+
+        return PLAN_CATALOG;
+    },
 
     getCurrentPlan: async (organizationId: string) => {
         const subscriptionDocument = await getCurrentPlanDocument(organizationId);
@@ -285,6 +301,14 @@ export const planService = {
         const busLimit = plan.defaultBusLimit || 5;
         const subscriptionDocument = await getOrCreatePlanDocument(organizationId);
         await refreshExpiredPlans(subscriptionDocument);
+
+        // Prevent re-activation of free trial
+        const hasUsedTrial = (subscriptionDocument.activePlans || []).some(
+            (record: any) => record.activationSource === 'trial'
+        );
+        if (hasUsedTrial) {
+            throw new Error('Free trial has already been used for this organization. Please choose a paid plan.');
+        }
 
         const currentBusCount = await Bus.countDocuments({ organizationId });
         const totalActiveBusLimit = getTotalActiveBusLimit(subscriptionDocument);

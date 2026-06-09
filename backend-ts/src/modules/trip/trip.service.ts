@@ -6,6 +6,8 @@ import {
     TRIP_STATUS,
     TripStatus,
 } from '../../constants/tripStatus';
+import { notificationService } from '../notification/notification.service';
+import { logger } from '../../utils/logger';
 
 const ACTIVE_TRIP_QUERY = {
     $nin: ACTIVE_TRIP_TERMINAL_STATUSES,
@@ -189,7 +191,24 @@ export const tripService = {
             .populate('routeId', 'name startName endName')
             .populate('driverId', 'name memberId');
 
-        return mapTripOrThrow(populatedTrip);
+        const result = mapTripOrThrow(populatedTrip);
+
+        // Emit trip started notification
+        try {
+            const busData = populatedTrip?.busId as any;
+            const routeData = populatedTrip?.routeId as any;
+            await notificationService.handleTripStarted({
+                organizationId: String(organizationId),
+                busId: String(bus._id),
+                busNumberPlate: busData?.numberPlate || bus.numberPlate || 'Unknown',
+                tripId: result.id,
+                routeId: routeData?._id ? String(routeData._id) : String(bus.routeId),
+            });
+        } catch (error) {
+            logger.error('[TripService] Failed to emit trip started notification:', error);
+        }
+
+        return result;
     },
 
     completeActiveTripForDriver: async (
@@ -226,7 +245,24 @@ export const tripService = {
             .populate('routeId', 'name startName endName')
             .populate('driverId', 'name memberId');
 
-        return mapTripOrThrow(populatedTrip);
+        const result = mapTripOrThrow(populatedTrip);
+
+        // Emit trip completed notification
+        try {
+            const busData = populatedTrip?.busId as any;
+            const routeData = populatedTrip?.routeId as any;
+            await notificationService.handleTripCompleted({
+                organizationId: String(organizationId),
+                busId: String(activeTrip.busId),
+                busNumberPlate: busData?.numberPlate || 'Unknown',
+                tripId: result.id,
+                routeId: routeData?._id ? String(routeData._id) : String(activeTrip.routeId || ''),
+            });
+        } catch (error) {
+            logger.error('[TripService] Failed to emit trip completed notification:', error);
+        }
+
+        return result;
     },
 
     updateActiveTripLocationByDriver: async (

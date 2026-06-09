@@ -24,6 +24,7 @@ import { routeDebugRouter } from './modules/route/route.debug.routes';
 import { planRouter } from './modules/plan/plan.routes';
 import { paymentRouter } from './modules/payment/payment.routes';
 import { paymentWebhookRouter } from './modules/payment/payment.webhook.routes';
+import { simulationRouter } from './modules/notification/simulation.routes';
 
 const app = express();
 
@@ -126,6 +127,7 @@ app.use('/api/user', userAppRouter);
 app.use('/api/user/notifications', notificationRouter);
 app.use('/api/notifications', deviceTokenRoutes);
 app.use('/api/debug', routeDebugRouter);
+app.use('/api/debug/notifications', simulationRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -6,6 +6,7 @@ import { Trip } from '../modules/trip/trip.model';
 import { redisService, CachedLocation } from './redis.service';
 import { locationValidationService, RawLocation, ValidatedLocation } from './location-validation.service';
 import { broadcastService } from './broadcast.service';
+import { notificationService } from '../modules/notification/notification.service';
 import { logger } from '../utils/logger';
 import { calculateDistanceMeters } from '../utils/calculateDistance';
 
@@ -355,6 +356,21 @@ export const batchTrackingService = {
                 accuracy: latestLocation.accuracy,
                 timestamp: latestLocation.timestamp,
             } as any);
+
+            // Trigger notification pipeline (near-stop, arrived, etc.)
+            try {
+                const busDoc = await Bus.findById(payload.busId).select('numberPlate').lean();
+                await notificationService.processBusLocationUpdate({
+                    organizationId,
+                    busId: payload.busId,
+                    busNumberPlate: busDoc?.numberPlate || 'Unknown',
+                    latitude: latestLocation.latitude,
+                    longitude: latestLocation.longitude,
+                    isBusStartedEvent: false, // Trip start is handled by startTripForDriver
+                });
+            } catch (notifError) {
+                logger.warn(`[BatchTracking] Notification processing failed (non-critical): ${notifError instanceof Error ? notifError.message : 'Unknown'}`);
+            }
 
             // Mark nonce as processed
             await redisService.markNonceProcessed(payload.nonce);

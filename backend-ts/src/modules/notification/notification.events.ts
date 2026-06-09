@@ -59,51 +59,17 @@ export const initializeNotificationListeners = () => {
 	 */
 	eventBus.on('TRIP_STARTED', async (data: any) => {
 		try {
-			const { tripId, busId, organizationId } = data;
+			const { tripId, busId, organizationId, busNumberPlate, routeId } = data;
 
 			logger.info(`TRIP_STARTED event: tripId=${tripId}, busId=${busId}`);
 
-			// Get all students assigned to this bus
-			const students = await User.find({
-				organizationId,
-				stopId: { $exists: true, $ne: null },
-			}).select('_id stopId');
-
-			if (students.length === 0) {
-				logger.warn(`No students found for bus: ${busId}`);
-				return;
-			}
-
-			// Send notification to each student
-			for (const student of students) {
-				const notificationKey = getNotificationKey('TRIP_STARTED', tripId, busId, student._id.toString());
-
-				if (!markNotificationSent(notificationKey)) {
-					logger.info(`TRIP_STARTED already notified: ${notificationKey}`);
-					continue;
-				}
-
-				// Check user preferences
-				const prefs = await notificationService.getUserPreferences(student._id.toString());
-				if (!prefs.tripStartedEnabled) {
-					logger.info(`Trip started notifications disabled for user: ${student._id}`);
-					continue;
-				}
-
-				const payload = {
-					organizationId: organizationId,
-					userId: student._id.toString(),
-					busId,
-					tripId,
-					type: 'TRIP_STARTED',
-					title: 'Trip Started',
-					body: 'Your bus has started and is on the way.',
-					voiceMessage: 'Your bus has started and is on the way. Please be ready.',
-				};
-
-				const result = await notificationService.sendFCMNotification(payload);
-				logger.info(`TRIP_STARTED sent to ${student._id}: ${result.success}`);
-			}
+			await notificationService.handleTripStarted({
+				organizationId: String(organizationId),
+				busId: String(busId),
+				busNumberPlate: busNumberPlate || 'Unknown',
+				tripId: String(tripId),
+				routeId: String(routeId || ''),
+			});
 		} catch (error) {
 			logger.error('Error in TRIP_STARTED listener:', error);
 		}
@@ -207,40 +173,42 @@ export const initializeNotificationListeners = () => {
 	 */
 	eventBus.on('DELAY_ALERT', async (data: any) => {
 		try {
-			const { tripId, busId, organizationId, delayMinutes, reason } = data;
+			const { tripId, busId, organizationId, delayMinutes, reason, busNumberPlate, routeId } = data;
 
-			logger.info(`DELAY_ALERT: busId=${busId}, delayMinutes=${delayMinutes}`);
+			logger.info(`DELAY_ALERT event: busId=${busId}, delayMinutes=${delayMinutes}`);
 
-			// Get all students assigned to this bus's route
-			const students = await User.find({
-				organizationId,
-				stopId: { $exists: true, $ne: null },
-			}).select('_id');
-
-			for (const student of students) {
-				const notifKey = getNotificationKey('DELAY_ALERT', tripId, busId, student._id.toString());
-
-				if (markNotificationSent(notifKey)) {
-					const prefs = await notificationService.getUserPreferences(student._id.toString());
-					if (prefs.delayAlertsEnabled) {
-						const payload = {
-							organizationId: organizationId,
-							userId: student._id.toString(),
-							busId,
-							tripId,
-							type: 'DELAY_ALERT',
-							title: 'Bus Delayed',
-							body: `Your bus is delayed by ${delayMinutes} minutes. ${reason || ''}`,
-							voiceMessage: `Your bus is delayed by ${delayMinutes} minutes.`,
-						};
-
-						const result = await notificationService.sendFCMNotification(payload);
-						logger.info(`DELAY_ALERT sent to ${student._id}: ${result.success}`);
-					}
-				}
-			}
+			await notificationService.handleDelayAlert({
+				organizationId: String(organizationId),
+				busId: String(busId),
+				busNumberPlate: busNumberPlate || 'Unknown',
+				tripId: String(tripId),
+				routeId: String(routeId || ''),
+				delayMinutes: Number(delayMinutes) || 0,
+				reason: reason || undefined,
+			});
 		} catch (error) {
 			logger.error('Error in DELAY_ALERT listener:', error);
+		}
+	});
+
+	/**
+	 * TRIP_COMPLETED event
+	 */
+	eventBus.on('TRIP_COMPLETED', async (data: any) => {
+		try {
+			const { tripId, busId, organizationId, busNumberPlate, routeId } = data;
+
+			logger.info(`TRIP_COMPLETED event: tripId=${tripId}, busId=${busId}`);
+
+			await notificationService.handleTripCompleted({
+				organizationId: String(organizationId),
+				busId: String(busId),
+				busNumberPlate: busNumberPlate || 'Unknown',
+				tripId: String(tripId),
+				routeId: String(routeId || ''),
+			});
+		} catch (error) {
+			logger.error('Error in TRIP_COMPLETED listener:', error);
 		}
 	});
 

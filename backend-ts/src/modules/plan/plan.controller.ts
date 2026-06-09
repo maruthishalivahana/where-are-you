@@ -5,9 +5,9 @@ const getMessage = (error: unknown): string =>
     error instanceof Error ? error.message : 'Something went wrong';
 
 export const planController = {
-    listPlans: async (_req: Request, res: Response): Promise<void> => {
+    listPlans: async (req: Request, res: Response): Promise<void> => {
         try {
-            const plans = await planService.listPlans();
+            const plans = await planService.listPlans(req.user?.organizationId);
             res.status(200).json({ plans });
         } catch (error) {
             res.status(500).json({ message: getMessage(error) });

@@ -12,6 +12,8 @@ import { logger } from '../../utils/logger';
 
 const toObjectId = (id: string) => new mongoose.Types.ObjectId(id);
 const NEAR_STOP_COOLDOWN_MS = 5 * 60 * 1000;
+const ARRIVED_THRESHOLD_M = 50;
+const ARRIVED_COOLDOWN_MS = 10 * 60 * 1000;
 
 const formatNotification = (notification: InstanceType<typeof Notification>) => ({
 	id: String(notification._id),
@@ -148,8 +150,9 @@ export const notificationService = {
 						Date.now() - new Date(subscription.lastNearStopNotifiedAt).getTime() >=
 							NEAR_STOP_COOLDOWN_MS;
 
+					const stopName = stop?.name || 'your location';
+
 					if (distance <= radius && canNotifyNearStop) {
-						const stopName = stop?.name || 'your location';
 						const title = 'Bus is nearby';
 						const message = `Bus ${input.busNumberPlate} is near ${stopName}`;
 
@@ -190,6 +193,53 @@ export const notificationService = {
 
 						subscription.lastNearStopNotifiedAt = new Date();
 						updatedSubscription = true;
+					}
+
+					// BUS_ARRIVED check (≤50m threshold)
+					if (distance <= ARRIVED_THRESHOLD_M) {
+						const canNotifyArrived =
+							!(subscription as any).lastArrivedNotifiedAt ||
+							Date.now() - new Date((subscription as any).lastArrivedNotifiedAt).getTime() >=
+								ARRIVED_COOLDOWN_MS;
+
+						if (canNotifyArrived) {
+							const arrivedTitle = 'Bus Arrived';
+							const arrivedMessage = `Bus ${input.busNumberPlate} has arrived at ${stopName}`;
+
+							await Notification.create({
+								organizationId: subscription.organizationId,
+								userId: subscription.userId,
+								busId: subscription.busId,
+								stopId: stop?._id || null,
+								type: NOTIFICATION_TYPES.BUS_ARRIVED,
+								title: arrivedTitle,
+								message: arrivedMessage,
+								payload: {
+									busId: input.busId,
+									numberPlate: input.busNumberPlate,
+									latitude: input.latitude,
+									longitude: input.longitude,
+									stopName,
+								},
+							});
+
+							if (fcmToken) {
+								await sendPushNotification({
+									fcmToken,
+									title: arrivedTitle,
+									body: arrivedMessage,
+									data: {
+										type: NOTIFICATION_TYPES.BUS_ARRIVED,
+										busId: input.busId,
+										numberPlate: input.busNumberPlate,
+										stopName,
+									},
+								});
+							}
+
+							(subscription as any).lastArrivedNotifiedAt = new Date();
+							updatedSubscription = true;
+						}
 					}
 				}
 			}
@@ -373,6 +423,209 @@ export const notificationService = {
 				busArrivedEnabled: true,
 				delayAlertsEnabled: true,
 			};
+		}
+	},
+
+	/**
+	 * Handle trip started — notify all users with stops in the organization
+	 */
+	handleTripStarted: async (input: {
+		organizationId: string;
+		busId: string;
+		busNumberPlate: string;
+		tripId: string;
+		routeId: string;
+	}) => {
+		try {
+			logger.info(`[Notification] handleTripStarted bus=${input.busNumberPlate} trip=${input.tripId}`);
+
+			// Find all users with a stopId in this organization
+			const users = await User.find({
+				organizationId: toObjectId(input.organizationId),
+				stopId: { $exists: true, $ne: null },
+			}).select('_id fcmToken notificationPreferences');
+
+			if (users.length === 0) {
+				logger.info('[Notification] No users with stops found for trip started notification');
+				return;
+			}
+
+			const title = 'Trip Started';
+			const message = `Bus ${input.busNumberPlate} has started its trip. Track it live!`;
+
+			for (const user of users) {
+				const prefs = user.notificationPreferences;
+				if (prefs && prefs.tripStartedEnabled === false) {
+					continue;
+				}
+
+				await Notification.create({
+					organizationId: toObjectId(input.organizationId),
+					userId: user._id,
+					busId: toObjectId(input.busId),
+					tripId: toObjectId(input.tripId),
+					type: NOTIFICATION_TYPES.TRIP_STARTED,
+					title,
+					message,
+					payload: {
+						busId: input.busId,
+						numberPlate: input.busNumberPlate,
+						tripId: input.tripId,
+						routeId: input.routeId,
+					},
+				});
+
+				const fcmToken = user.fcmToken ? String(user.fcmToken).trim() : '';
+				if (fcmToken) {
+					await sendPushNotification({
+						fcmToken,
+						title,
+						body: message,
+						data: {
+							type: NOTIFICATION_TYPES.TRIP_STARTED,
+							busId: input.busId,
+							numberPlate: input.busNumberPlate,
+							tripId: input.tripId,
+						},
+					});
+				}
+			}
+
+			logger.info(`[Notification] Trip started notifications sent to ${users.length} users`);
+		} catch (error) {
+			logger.error('[Notification] handleTripStarted error:', error);
+		}
+	},
+
+	/**
+	 * Handle trip completed — notify subscribed users
+	 */
+	handleTripCompleted: async (input: {
+		organizationId: string;
+		busId: string;
+		busNumberPlate: string;
+		tripId: string;
+		routeId: string;
+	}) => {
+		try {
+			logger.info(`[Notification] handleTripCompleted bus=${input.busNumberPlate} trip=${input.tripId}`);
+
+			// Find subscribed users for this bus
+			const subscriptions = await BusSubscription.find({
+				organizationId: toObjectId(input.organizationId),
+				busId: toObjectId(input.busId),
+				isActive: true,
+			});
+
+			const title = 'Trip Completed';
+			const message = `Bus ${input.busNumberPlate} has completed its trip.`;
+
+			for (const sub of subscriptions) {
+				const user = await User.findById(sub.userId).select('_id fcmToken');
+				if (!user) continue;
+
+				await Notification.create({
+					organizationId: toObjectId(input.organizationId),
+					userId: user._id,
+					busId: toObjectId(input.busId),
+					tripId: toObjectId(input.tripId),
+					type: NOTIFICATION_TYPES.TRIP_STARTED,
+					title,
+					message,
+					payload: {
+						busId: input.busId,
+						numberPlate: input.busNumberPlate,
+						tripId: input.tripId,
+						routeId: input.routeId,
+					},
+				});
+
+				const fcmToken = user.fcmToken ? String(user.fcmToken).trim() : '';
+				if (fcmToken) {
+					await sendPushNotification({
+						fcmToken,
+						title,
+						body: message,
+						data: {
+							type: NOTIFICATION_TYPES.TRIP_STARTED,
+							busId: input.busId,
+							numberPlate: input.busNumberPlate,
+							tripId: input.tripId,
+						},
+					});
+				}
+			}
+
+			logger.info(`[Notification] Trip completed notifications sent to ${subscriptions.length} subscribers`);
+		} catch (error) {
+			logger.error('[Notification] handleTripCompleted error:', error);
+		}
+	},
+
+	/**
+	 * Handle delay alert — notify all users with stops in the organization
+	 */
+	handleDelayAlert: async (input: {
+		organizationId: string;
+		busId: string;
+		busNumberPlate: string;
+		tripId: string;
+		routeId: string;
+		delayMinutes: number;
+		reason?: string;
+	}) => {
+		try {
+			logger.info(`[Notification] handleDelayAlert bus=${input.busNumberPlate} delay=${input.delayMinutes}min`);
+
+			const users = await User.find({
+				organizationId: toObjectId(input.organizationId),
+				stopId: { $exists: true, $ne: null },
+			}).select('_id fcmToken notificationPreferences');
+
+			const title = 'Bus Delayed';
+			const message = `Bus ${input.busNumberPlate} is delayed by ~${input.delayMinutes} minutes.${input.reason ? ' ' + input.reason : ''}`;
+
+			for (const user of users) {
+				const prefs = user.notificationPreferences;
+				if (prefs && prefs.delayAlertsEnabled === false) {
+					continue;
+				}
+
+				await Notification.create({
+					organizationId: toObjectId(input.organizationId),
+					userId: user._id,
+					busId: toObjectId(input.busId),
+					tripId: toObjectId(input.tripId),
+					type: NOTIFICATION_TYPES.DELAY_ALERT,
+					title,
+					message,
+					payload: {
+						busId: input.busId,
+						numberPlate: input.busNumberPlate,
+						tripId: input.tripId,
+						delayMinutes: String(input.delayMinutes),
+					},
+				});
+
+				const fcmToken = user.fcmToken ? String(user.fcmToken).trim() : '';
+				if (fcmToken) {
+					await sendPushNotification({
+						fcmToken,
+						title,
+						body: message,
+						data: {
+							type: NOTIFICATION_TYPES.DELAY_ALERT,
+							busId: input.busId,
+							numberPlate: input.busNumberPlate,
+							delayMinutes: String(input.delayMinutes),
+						},
+					});
+				}
+			}
+
+			logger.info(`[Notification] Delay alert sent to ${users.length} users`);
+		} catch (error) {
+			logger.error('[Notification] handleDelayAlert error:', error);
 		}
 	},
 };
