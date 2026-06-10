@@ -10,6 +10,7 @@ import { calculateDistanceMeters } from '../../utils/calculateDistance';
 import { tripService } from '../trip/trip.service';
 import { Trip } from '../trip/trip.model';
 import { ENV } from '../../config/env.config';
+import { DeviceToken } from '../notification/deviceToken.model';
 
 const toObjectId = (id: string) => new mongoose.Types.ObjectId(id);
 
@@ -454,23 +455,36 @@ export const userService = {
     },
 
     updateMyFcmToken: async (organizationId: string, userId: string, fcmToken: string) => {
-        const user = await User.findOneAndUpdate(
-            {
-                _id: toObjectId(userId),
-                organizationId: toObjectId(organizationId),
-            },
-            { fcmToken: fcmToken.trim() },
-            { new: true }
-        );
+        const user = await User.findOne({
+            _id: toObjectId(userId),
+            organizationId: toObjectId(organizationId),
+        });
 
         if (!user) {
             throw new Error('User not found');
         }
 
+        // Register the device token in DeviceToken collection instead of User
+        const existing = await DeviceToken.findOne({ deviceToken: fcmToken.trim() });
+        if (existing) {
+            existing.userId = toObjectId(userId) as any;
+            existing.isActive = true;
+            existing.lastUsedAt = new Date();
+            await existing.save();
+        } else {
+            await DeviceToken.create({
+                userId: toObjectId(userId) as any,
+                deviceToken: fcmToken.trim(),
+                deviceType: 'android',
+                isActive: true,
+                lastUsedAt: new Date(),
+            });
+        }
+
         return {
             id: String(user._id),
             memberId: user.memberId,
-            fcmToken: user.fcmToken,
+            fcmToken: fcmToken.trim(),
         };
     },
 
@@ -687,6 +701,50 @@ export const userService = {
             stopLatitude: stop?.latitude || null,
             stopLongitude: stop?.longitude || null,
             stopSequence: stop?.sequenceOrder || null,
+        };
+    },
+
+    getMyProfile: async (userId: string, organizationId: string) => {
+        const user = await User.findOne({
+            _id: toObjectId(userId),
+            organizationId: toObjectId(organizationId),
+        })
+            .populate('routeId', 'name description')
+            .populate('stopId', 'name latitude longitude sequenceOrder');
+
+        if (!user) throw new Error('User not found');
+
+        const route = user.routeId as any;
+        const stop = user.stopId as any;
+
+        // Fetch active devices from DeviceToken collection
+        const activeDevices = await DeviceToken.find({
+            userId: toObjectId(userId),
+            isActive: true,
+        } as any);
+
+        return {
+            id: String(user._id),
+            name: user.name,
+            memberId: user.memberId,
+            email: user.email || null,
+            phone: user.phone || null,
+            organizationId: String(user.organizationId),
+            routeId: route ? String(route._id) : null,
+            routeName: route?.name || null,
+            stopId: stop ? String(stop._id) : null,
+            stopName: stop?.name || null,
+            // Dynamically resolve fcmToken from active devices for backward compatibility
+            fcmToken: activeDevices.length > 0 ? activeDevices[0].deviceToken : null,
+            registeredDevicesCount: activeDevices.length,
+            hasRegisteredDevice: activeDevices.length > 0,
+            notificationPreferences: user.notificationPreferences || {
+                tripStartedEnabled: true,
+                busNearStopEnabled: true,
+                busArrivedEnabled: true,
+                delayAlertsEnabled: true,
+            },
+            createdAt: user.createdAt,
         };
     },
 };

@@ -117,6 +117,7 @@ export const userAppController = {
             const fcmToken = String(req.body?.fcmToken || '').trim();
             if (!fcmToken) {
                 res.status(400).json({ message: 'fcmToken is required' });
+                console.log
                 return;
             }
 
@@ -346,6 +347,36 @@ export const userAppController = {
             res.status(200).json({
                 success: true,
                 data: assignedStop,
+            });
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: getMessage(error),
+            });
+        }
+    },
+
+    /**
+     * Get user's profile details including FCM token
+     * GET /api/user/profile
+     */
+    getProfile: async (req: Request, res: Response): Promise<void> => {
+        try {
+            if (!req.user?.organizationId || !req.user.sub) {
+                res.status(401).json({ message: 'Unauthorized' });
+                return;
+            }
+
+            const profile = await userService.getMyProfile(
+                req.user.sub,
+                req.user.organizationId
+            );
+
+            res.status(200).json({
+                success: true,
+                ...profile,
+                user: profile,
+                data: profile,
             });
         } catch (error) {
             res.status(400).json({

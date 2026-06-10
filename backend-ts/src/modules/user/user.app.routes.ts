@@ -19,6 +19,9 @@ userAppRouter.get('/subscriptions', userAppController.getMySubscriptions);
 userAppRouter.delete('/subscriptions/:subscriptionId', userAppController.unsubscribeBus);
 
 userAppRouter.patch('/profile/fcm-token', userAppController.updateMyFcmToken);
+userAppRouter.put('/profile/fcm-token', userAppController.updateMyFcmToken);
+userAppRouter.put('/fcm-token', userAppController.updateMyFcmToken);
+userAppRouter.get('/profile', userAppController.getProfile);
 
 userAppRouter.get('/routes', userAppController.getAvailableRoutes);
 userAppRouter.get('/routes/:routeId/stops', userAppController.getRouteStops);

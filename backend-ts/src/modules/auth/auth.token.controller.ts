@@ -5,37 +5,34 @@ import { setAuthCookies, clearAuthCookies } from '../../utils/cookies';
 import { User } from '../user/user.model';
 import { Driver } from '../driver/driver.model';
 import { tripService } from '../trip/trip.service';
+import { DeviceToken } from '../notification/deviceToken.model';
 
 export const refreshTokenController = async (req: Request, res: Response): Promise<void> => {
-    try {
-        // Try to get refresh token from cookie first, then from body
-        const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+    // Try to get refresh token from cookie first, then from body
+    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
-        if (!refreshToken) {
-            res.status(401).json({ message: 'Refresh token required' });
-            return;
-        }
-
-        // Verify refresh token
-        const payload = verifyRefreshToken(refreshToken);
-
-        // Generate new tokens
-        const { accessToken: newAccessToken, refreshToken: newRefreshToken } = generateTokens({
-            sub: payload.sub,
-            organizationId: payload.organizationId,
-            role: payload.role,
-        });
-
-        // Set new cookies
-        setAuthCookies(res, newAccessToken, newRefreshToken);
-
-        res.status(200).json({
-            accessToken: newAccessToken,
-            refreshToken: newRefreshToken,
-        });
-    } catch (error) {
-        res.status(401).json({ message: 'Invalid or expired refresh token' });
+    if (!refreshToken) {
+        res.status(401).json({ message: 'Refresh token required' });
+        return;
     }
+
+    // Verify refresh token
+    const payload = verifyRefreshToken(refreshToken);
+
+    // Generate new tokens
+    const { accessToken: newAccessToken, refreshToken: newRefreshToken } = generateTokens({
+        sub: payload.sub,
+        organizationId: payload.organizationId,
+        role: payload.role,
+    });
+
+    // Set new cookies
+    setAuthCookies(res, newAccessToken, newRefreshToken);
+
+    res.status(200).json({
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+    });
 };
 
 export const logoutController = async (req: Request, res: Response): Promise<void> => {
@@ -49,6 +46,10 @@ export const logoutUserController = async (req: Request, res: Response): Promise
             await User.findOneAndUpdate(
                 { _id: req.user.sub, organizationId: req.user.organizationId },
                 { fcmToken: '' }
+            );
+            await DeviceToken.updateMany(
+                { userId: req.user.sub } as any,
+                { isActive: false }
             );
         }
 

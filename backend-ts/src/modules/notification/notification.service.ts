@@ -78,8 +78,7 @@ export const notificationService = {
 
 		for (const subscription of subscriptions) {
 			let updatedSubscription = false;
-			const user = await User.findById(subscription.userId).select('_id fcmToken');
-			const fcmToken = user?.fcmToken ? String(user.fcmToken).trim() : '';
+			const deviceTokens = await notificationService.getUserDeviceTokens(subscription.userId.toString());
 
 			if (input.isBusStartedEvent && subscription.notifyOnBusStart) {
 				const title = 'Bus started';
@@ -100,9 +99,9 @@ export const notificationService = {
 					},
 				});
 
-				if (fcmToken) {
+				for (const token of deviceTokens) {
 					await sendPushNotification({
-						fcmToken,
+						fcmToken: token,
 						title,
 						body: message,
 						data: {
@@ -176,9 +175,9 @@ export const notificationService = {
 							},
 						});
 
-						if (fcmToken) {
+						for (const token of deviceTokens) {
 							await sendPushNotification({
-								fcmToken,
+								fcmToken: token,
 								title,
 								body: message,
 								data: {
@@ -223,9 +222,9 @@ export const notificationService = {
 								},
 							});
 
-							if (fcmToken) {
+							for (const token of deviceTokens) {
 								await sendPushNotification({
-									fcmToken,
+									fcmToken: token,
 									title: arrivedTitle,
 									body: arrivedMessage,
 									data: {
@@ -257,18 +256,24 @@ export const notificationService = {
 		deviceType: 'ios' | 'android' | 'web'
 	) => {
 		try {
+			logger.info(`registerDeviceToken initiated - userId: ${userId}, deviceType: ${deviceType}, token: ${deviceToken.substring(0, 15)}...`);
+
+			// Find existing token record (since deviceToken is unique)
 			const existing = await DeviceToken.findOne({ deviceToken });
 
 			if (existing) {
-				if (existing.userId.toString() !== userId) {
-					(existing.userId as any) = toObjectId(userId);
-					existing.lastUsedAt = new Date();
-					await existing.save();
-				}
+				existing.userId = toObjectId(userId) as any;
+				existing.deviceType = deviceType;
+				existing.isActive = true;
+				existing.lastUsedAt = new Date();
+				const updatedDoc = await existing.save();
+
+				logger.info(`Device token updated successfully - userId: ${userId}, deviceType: ${deviceType}, docId: ${updatedDoc._id}, lastUsedAt: ${updatedDoc.lastUsedAt}`);
 				return true;
 			}
 
-			await DeviceToken.create({
+			// Create a new device token record if not exists
+			const newDoc = await DeviceToken.create({
 				userId: toObjectId(userId) as any,
 				deviceToken,
 				deviceType,
@@ -276,10 +281,10 @@ export const notificationService = {
 				lastUsedAt: new Date(),
 			});
 
-			logger.info(`Device token registered: ${userId}`);
+			logger.info(`Device token created successfully - userId: ${userId}, deviceType: ${deviceType}, docId: ${newDoc._id}`);
 			return true;
 		} catch (error) {
-			logger.error('Error registering device token:', error);
+			logger.error(`Error registering device token for userId: ${userId}, error:`, error);
 			return false;
 		}
 	},
@@ -306,6 +311,31 @@ export const notificationService = {
 		} catch (error) {
 			logger.error('Error fetching device tokens:', error);
 			return [];
+		}
+	},
+
+	sendPushToUserDevices: async (
+		userId: string,
+		title: string,
+		body: string,
+		data: Record<string, string> = {}
+	) => {
+		try {
+			const deviceTokens = await notificationService.getUserDeviceTokens(userId);
+			if (deviceTokens.length === 0) {
+				logger.warn(`No active device tokens found for user: ${userId}`);
+				return;
+			}
+			for (const token of deviceTokens) {
+				await sendPushNotification({
+					fcmToken: token,
+					title,
+					body,
+					data,
+				});
+			}
+		} catch (error) {
+			logger.error(`Error sending push to user devices (userId=${userId}):`, error);
 		}
 	},
 
@@ -443,7 +473,7 @@ export const notificationService = {
 			const users = await User.find({
 				organizationId: toObjectId(input.organizationId),
 				stopId: { $exists: true, $ne: null },
-			}).select('_id fcmToken notificationPreferences');
+			}).select('_id notificationPreferences');
 
 			if (users.length === 0) {
 				logger.info('[Notification] No users with stops found for trip started notification');
@@ -475,10 +505,10 @@ export const notificationService = {
 					},
 				});
 
-				const fcmToken = user.fcmToken ? String(user.fcmToken).trim() : '';
-				if (fcmToken) {
+				const deviceTokens = await notificationService.getUserDeviceTokens(user._id.toString());
+				for (const token of deviceTokens) {
 					await sendPushNotification({
-						fcmToken,
+						fcmToken: token,
 						title,
 						body: message,
 						data: {
@@ -521,7 +551,7 @@ export const notificationService = {
 			const message = `Bus ${input.busNumberPlate} has completed its trip.`;
 
 			for (const sub of subscriptions) {
-				const user = await User.findById(sub.userId).select('_id fcmToken');
+				const user = await User.findById(sub.userId).select('_id');
 				if (!user) continue;
 
 				await Notification.create({
@@ -540,10 +570,10 @@ export const notificationService = {
 					},
 				});
 
-				const fcmToken = user.fcmToken ? String(user.fcmToken).trim() : '';
-				if (fcmToken) {
+				const deviceTokens = await notificationService.getUserDeviceTokens(user._id.toString());
+				for (const token of deviceTokens) {
 					await sendPushNotification({
-						fcmToken,
+						fcmToken: token,
 						title,
 						body: message,
 						data: {
@@ -580,7 +610,7 @@ export const notificationService = {
 			const users = await User.find({
 				organizationId: toObjectId(input.organizationId),
 				stopId: { $exists: true, $ne: null },
-			}).select('_id fcmToken notificationPreferences');
+			}).select('_id notificationPreferences');
 
 			const title = 'Bus Delayed';
 			const message = `Bus ${input.busNumberPlate} is delayed by ~${input.delayMinutes} minutes.${input.reason ? ' ' + input.reason : ''}`;
@@ -607,10 +637,10 @@ export const notificationService = {
 					},
 				});
 
-				const fcmToken = user.fcmToken ? String(user.fcmToken).trim() : '';
-				if (fcmToken) {
+				const deviceTokens = await notificationService.getUserDeviceTokens(user._id.toString());
+				for (const token of deviceTokens) {
 					await sendPushNotification({
-						fcmToken,
+						fcmToken: token,
 						title,
 						body: message,
 						data: {
