@@ -5,14 +5,14 @@ import { BusSubscription } from '../busSubscription/busSubscription.model';
 import { Stop } from '../stop/stop.model';
 import { Notification } from './notification.model';
 import { User } from '../user/user.model';
+import { Bus } from '../bus/bus.model';
 import { sendPushNotification } from '../../utils/sendPushNotification';
-import { messaging } from '../../config/fcm.config';
 import { DeviceToken } from './deviceToken.model';
 import { logger } from '../../utils/logger';
 
 const toObjectId = (id: string) => new mongoose.Types.ObjectId(id);
 const NEAR_STOP_COOLDOWN_MS = 5 * 60 * 1000;
-const ARRIVED_THRESHOLD_M = 50;
+const ARRIVED_THRESHOLD_M = 100;
 const ARRIVED_COOLDOWN_MS = 10 * 60 * 1000;
 
 const formatNotification = (notification: InstanceType<typeof Notification>) => ({
@@ -66,11 +66,77 @@ export const notificationService = {
 		longitude: number;
 		isBusStartedEvent: boolean;
 	}) => {
+		logger.info(`[Notification] processBusLocationUpdate initiated: busId=${input.busId}, plate=${input.busNumberPlate}, lat=${input.latitude}, lng=${input.longitude}, isStart=${input.isBusStartedEvent}`);
+
+		// 1. Resolve implicit route-based subscriptions first
+		try {
+			const bus = await Bus.findOne({
+				_id: toObjectId(input.busId),
+				organizationId: toObjectId(input.organizationId),
+			}).select('routeId');
+
+			if (bus && bus.routeId) {
+				logger.info(`[Notification] Bus ${input.busNumberPlate} route found: ${bus.routeId}. Resolving implicit subscriptions...`);
+
+				const routeUsers = await User.find({
+					organizationId: toObjectId(input.organizationId),
+					routeId: bus.routeId,
+					stopId: { $exists: true, $ne: null },
+				}).select('_id name stopId');
+
+				logger.info(`[Notification] Found ${routeUsers.length} route users assigned to route ${bus.routeId}`);
+
+				for (const u of routeUsers) {
+					const existingSub = await BusSubscription.findOne({
+						organizationId: toObjectId(input.organizationId),
+						userId: u._id,
+						busId: bus._id,
+					});
+
+					if (!existingSub) {
+						await BusSubscription.create({
+							organizationId: toObjectId(input.organizationId),
+							userId: u._id,
+							busId: bus._id,
+							stopId: u.stopId,
+							notifyOnBusStart: true,
+							notifyOnNearStop: true,
+							nearRadiusMeters: 500, // Safe default threshold
+							isActive: true,
+						});
+						logger.info(`[Notification] Created implicit BusSubscription for user ${u.name} (ID: ${u._id}) on route ${bus.routeId}`);
+					} else {
+						// Sync stopId if it has changed in user profile
+						let subUpdated = false;
+						if (!existingSub.isActive) {
+							existingSub.isActive = true;
+							subUpdated = true;
+						}
+						if (!existingSub.stopId || existingSub.stopId.toString() !== u.stopId?.toString()) {
+							existingSub.stopId = u.stopId;
+							subUpdated = true;
+						}
+						if (subUpdated) {
+							await existingSub.save();
+							logger.info(`[Notification] Synchronized BusSubscription settings for user ${u.name} (ID: ${u._id})`);
+						}
+					}
+				}
+			} else {
+				logger.warn(`[Notification] Bus ${input.busNumberPlate} has no assigned routeId`);
+			}
+		} catch (subError) {
+			logger.error('[Notification] Error resolving implicit route subscriptions:', subError);
+		}
+
+		// 2. Query all active subscriptions for this bus
 		const subscriptions = await BusSubscription.find({
 			organizationId: toObjectId(input.organizationId),
 			busId: toObjectId(input.busId),
 			isActive: true,
 		}).populate('stopId', 'name latitude longitude radiusMeters');
+
+		logger.info(`[Notification] Found ${subscriptions.length} active subscriptions for busId=${input.busId}`);
 
 		if (subscriptions.length === 0) {
 			return;
@@ -78,44 +144,78 @@ export const notificationService = {
 
 		for (const subscription of subscriptions) {
 			let updatedSubscription = false;
-			const deviceTokens = await notificationService.getUserDeviceTokens(subscription.userId.toString());
+			const userId = subscription.userId.toString();
+			const deviceTokens = await notificationService.getUserDeviceTokens(userId);
 
-			if (input.isBusStartedEvent && subscription.notifyOnBusStart) {
-				const title = 'Bus started';
-				const message = `Bus ${input.busNumberPlate} has started`;
+			logger.info(`[Notification] Processing subscription for userId=${userId} — found ${deviceTokens.length} active device tokens`);
 
-				await Notification.create({
-					organizationId: subscription.organizationId,
-					userId: subscription.userId,
-					busId: subscription.busId,
-					type: NOTIFICATION_TYPES.BUS_STARTED,
-					title,
-					message,
-					payload: {
-						busId: input.busId,
-						numberPlate: input.busNumberPlate,
-						latitude: input.latitude,
-						longitude: input.longitude,
-					},
-				});
-
-				for (const token of deviceTokens) {
-					await sendPushNotification({
-						fcmToken: token,
-						title,
-						body: message,
-						data: {
-							type: NOTIFICATION_TYPES.BUS_STARTED,
-							busId: input.busId,
-							numberPlate: input.busNumberPlate,
-						},
-					});
-				}
-
-				subscription.lastStartNotifiedAt = new Date();
-				updatedSubscription = true;
+			if (deviceTokens.length === 0) {
+				continue;
 			}
 
+			// Load user notification preferences to validate
+			const userPrefs = await notificationService.getUserPreferences(userId);
+			logger.info(`[Notification] Preferences for user ${userId}: start=${userPrefs.tripStartedEnabled}, near=${userPrefs.busNearStopEnabled}, arrived=${userPrefs.busArrivedEnabled}`);
+
+			// Bus Started Alert
+			if (input.isBusStartedEvent && subscription.notifyOnBusStart) {
+				if (!userPrefs.tripStartedEnabled) {
+					logger.info(`[Notification] User ${userId} has disabled trip start alerts. Skipping.`);
+				} else {
+					const title = 'Bus started';
+					const message = `Bus ${input.busNumberPlate} has started`;
+
+					logger.info(`[Notification] Creating BUS_STARTED DB record for user ${userId}`);
+					await Notification.create({
+						organizationId: subscription.organizationId,
+						userId: subscription.userId,
+						busId: subscription.busId,
+						type: NOTIFICATION_TYPES.BUS_STARTED,
+						title,
+						message,
+						payload: {
+							busId: input.busId,
+							numberPlate: input.busNumberPlate,
+							latitude: input.latitude,
+							longitude: input.longitude,
+						},
+					});
+
+					for (const token of deviceTokens) {
+						try {
+							logger.info(`[Notification] Sending BUS_STARTED FCM to token: ${token.substring(0, 15)}...`);
+							await sendPushNotification({
+								fcmToken: token,
+								title,
+								body: message,
+								data: {
+									type: NOTIFICATION_TYPES.BUS_STARTED,
+									busId: input.busId,
+									numberPlate: input.busNumberPlate,
+								},
+							});
+						} catch (error: any) {
+							const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+							const errorCode = error?.code || '';
+							logger.error(`[Notification] Failed to send BUS_STARTED FCM to user ${userId} token:`, error);
+							if (
+								errorCode === 'messaging/registration-token-not-registered' ||
+								errorCode === 'messaging/invalid-argument' ||
+								errorMessage.includes('not registered') ||
+								errorMessage.includes('invalid') ||
+								errorMessage.includes('requested entity was not found')
+							) {
+								await notificationService.deactivateDeviceToken(token);
+							}
+						}
+					}
+
+					subscription.lastStartNotifiedAt = new Date();
+					updatedSubscription = true;
+				}
+			}
+
+			// Proximity & Arrival alerts
 			if (subscription.notifyOnNearStop) {
 				const stop = subscription.stopId as any;
 				const targetLat =
@@ -132,6 +232,8 @@ export const notificationService = {
 						  ? stop.longitude
 						  : null;
 
+				const stopName = stop?.name || 'your location';
+
 				if (targetLat !== null && targetLng !== null) {
 					const distance = calculateDistanceMeters(
 						input.latitude,
@@ -140,71 +242,103 @@ export const notificationService = {
 						targetLng
 					);
 
-					const radius =
-						subscription.nearRadiusMeters ||
-						(typeof stop?.radiusMeters === 'number' ? stop.radiusMeters : 150);
+					// Enforce a minimum safe radius of 500m for near alerts
+					const radius = Math.max(
+						subscription.nearRadiusMeters || 0,
+						typeof stop?.radiusMeters === 'number' ? stop.radiusMeters : 0,
+						500
+					);
+
+					logger.info(`[Notification] Distance calculation: user/stop=${userId}/${stopName}, distance=${Math.round(distance)}m, radius=${radius}m`);
 
 					const canNotifyNearStop =
 						!subscription.lastNearStopNotifiedAt ||
 						Date.now() - new Date(subscription.lastNearStopNotifiedAt).getTime() >=
 							NEAR_STOP_COOLDOWN_MS;
 
-					const stopName = stop?.name || 'your location';
+					// Near Stop Alert
+					if (distance <= radius) {
+						if (!canNotifyNearStop) {
+							logger.info(`[Notification] BUS_NEAR_STOP cooldown active for user ${userId}. Skipping.`);
+						} else if (!userPrefs.busNearStopEnabled) {
+							logger.info(`[Notification] User ${userId} has disabled near stop alerts. Skipping.`);
+						} else {
+							const title = 'Bus is nearby';
+							const message = `Bus ${input.busNumberPlate} is near ${stopName}`;
 
-					if (distance <= radius && canNotifyNearStop) {
-						const title = 'Bus is nearby';
-						const message = `Bus ${input.busNumberPlate} is near ${stopName}`;
-
-						await Notification.create({
-							organizationId: subscription.organizationId,
-							userId: subscription.userId,
-							busId: subscription.busId,
-							stopId: stop?._id || null,
-							type: NOTIFICATION_TYPES.BUS_NEAR_STOP,
-							title,
-							message,
-							payload: {
-								busId: input.busId,
-								numberPlate: input.busNumberPlate,
-								latitude: input.latitude,
-								longitude: input.longitude,
-								targetLatitude: targetLat,
-								targetLongitude: targetLng,
-								distanceMeters: Math.round(distance),
-								radiusMeters: radius,
-							},
-						});
-
-						for (const token of deviceTokens) {
-							await sendPushNotification({
-								fcmToken: token,
+							logger.info(`[Notification] Creating BUS_NEAR_STOP DB record for user ${userId}`);
+							await Notification.create({
+								organizationId: subscription.organizationId,
+								userId: subscription.userId,
+								busId: subscription.busId,
+								stopId: stop?._id || null,
+								type: NOTIFICATION_TYPES.BUS_NEAR_STOP,
 								title,
-								body: message,
-								data: {
-									type: NOTIFICATION_TYPES.BUS_NEAR_STOP,
+								message,
+								payload: {
 									busId: input.busId,
 									numberPlate: input.busNumberPlate,
-									stopName,
-									distanceMeters: String(Math.round(distance)),
+									latitude: input.latitude,
+									longitude: input.longitude,
+									targetLatitude: targetLat,
+									targetLongitude: targetLng,
+									distanceMeters: Math.round(distance),
+									radiusMeters: radius,
 								},
 							});
-						}
 
-						subscription.lastNearStopNotifiedAt = new Date();
-						updatedSubscription = true;
+							for (const token of deviceTokens) {
+								try {
+									logger.info(`[Notification] Sending BUS_NEAR_STOP FCM to token: ${token.substring(0, 15)}...`);
+									await sendPushNotification({
+										fcmToken: token,
+										title,
+										body: message,
+										data: {
+											type: NOTIFICATION_TYPES.BUS_NEAR_STOP,
+											busId: input.busId,
+											numberPlate: input.busNumberPlate,
+											stopName,
+											distanceMeters: String(Math.round(distance)),
+										},
+									});
+								} catch (error: any) {
+									const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+									const errorCode = error?.code || '';
+									logger.error(`[Notification] Failed to send BUS_NEAR_STOP FCM to user ${userId} token:`, error);
+									if (
+										errorCode === 'messaging/registration-token-not-registered' ||
+										errorCode === 'messaging/invalid-argument' ||
+										errorMessage.includes('not registered') ||
+										errorMessage.includes('invalid') ||
+										errorMessage.includes('requested entity was not found')
+									) {
+										await notificationService.deactivateDeviceToken(token);
+									}
+								}
+							}
+
+							subscription.lastNearStopNotifiedAt = new Date();
+							updatedSubscription = true;
+						}
 					}
 
-					// BUS_ARRIVED check (≤50m threshold)
+					// Bus Arrived Alert
 					if (distance <= ARRIVED_THRESHOLD_M) {
 						const canNotifyArrived =
-							!(subscription as any).lastArrivedNotifiedAt ||
-							Date.now() - new Date((subscription as any).lastArrivedNotifiedAt).getTime() >=
+							!subscription.lastArrivedNotifiedAt ||
+							Date.now() - new Date(subscription.lastArrivedNotifiedAt).getTime() >=
 								ARRIVED_COOLDOWN_MS;
 
-						if (canNotifyArrived) {
+						if (!canNotifyArrived) {
+							logger.info(`[Notification] BUS_ARRIVED cooldown active for user ${userId}. Skipping.`);
+						} else if (!userPrefs.busArrivedEnabled) {
+							logger.info(`[Notification] User ${userId} has disabled arrived alerts. Skipping.`);
+						} else {
 							const arrivedTitle = 'Bus Arrived';
 							const arrivedMessage = `Bus ${input.busNumberPlate} has arrived at ${stopName}`;
 
+							logger.info(`[Notification] Creating BUS_ARRIVED DB record for user ${userId}`);
 							await Notification.create({
 								organizationId: subscription.organizationId,
 								userId: subscription.userId,
@@ -223,23 +357,41 @@ export const notificationService = {
 							});
 
 							for (const token of deviceTokens) {
-								await sendPushNotification({
-									fcmToken: token,
-									title: arrivedTitle,
-									body: arrivedMessage,
-									data: {
-										type: NOTIFICATION_TYPES.BUS_ARRIVED,
-										busId: input.busId,
-										numberPlate: input.busNumberPlate,
-										stopName,
-									},
-								});
+								try {
+									logger.info(`[Notification] Sending BUS_ARRIVED FCM to token: ${token.substring(0, 15)}...`);
+									await sendPushNotification({
+										fcmToken: token,
+										title: arrivedTitle,
+										body: arrivedMessage,
+										data: {
+											type: NOTIFICATION_TYPES.BUS_ARRIVED,
+											busId: input.busId,
+											numberPlate: input.busNumberPlate,
+											stopName,
+										},
+									});
+								} catch (error: any) {
+									const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+									const errorCode = error?.code || '';
+									logger.error(`[Notification] Failed to send BUS_ARRIVED FCM to user ${userId} token:`, error);
+									if (
+										errorCode === 'messaging/registration-token-not-registered' ||
+										errorCode === 'messaging/invalid-argument' ||
+										errorMessage.includes('not registered') ||
+										errorMessage.includes('invalid') ||
+										errorMessage.includes('requested entity was not found')
+									) {
+										await notificationService.deactivateDeviceToken(token);
+									}
+								}
 							}
 
-							(subscription as any).lastArrivedNotifiedAt = new Date();
+							subscription.lastArrivedNotifiedAt = new Date();
 							updatedSubscription = true;
 						}
 					}
+				} else {
+					logger.warn(`[Notification] Coordinates missing for user ${userId} or stop`);
 				}
 			}
 
@@ -361,49 +513,28 @@ export const notificationService = {
 				return { success: false, error: 'No device tokens' };
 			}
 
-			// FCM message structure
-			const fcmMessage: any = {
-				notification: {
-					title: input.title,
-					body: input.body,
-				},
-				data: {
-					notificationType: input.type,
-					tripId: input.tripId,
-					busId: input.busId,
-					voiceMessage: input.voiceMessage,
-					isSticky: String(input.isSticky || false),
-					noSound: String(input.noSound || false),
-				},
-			};
-
-			// Add Android-specific configuration for sticky/silent notifications
-			if (input.noSound) {
-				fcmMessage.android = {
-					priority: 'high',
-					notification: {
-						sound: null,
-						channelId: 'driver_channel',
-						tag: input.tripId ? `trip_${input.tripId}` : 'driver_notification',
-					},
-				};
-			}
-
 			let successCount = 0;
 			let failureCount = 0;
 
 			for (const token of deviceTokens) {
 				try {
-					const messageId = await messaging.send({
-						...fcmMessage,
-						token,
+					await sendPushNotification({
+						fcmToken: token,
+						title: input.title,
+						body: input.body,
+						data: {
+							notificationType: input.type,
+							tripId: input.tripId || '',
+							busId: input.busId || '',
+							voiceMessage: input.voiceMessage || '',
+							isSticky: String(input.isSticky || false),
+							noSound: String(input.noSound || false),
+						},
 					});
-
 					successCount++;
-					logger.info(`FCM sent to device: ${messageId}`);
 				} catch (error) {
 					failureCount++;
-					logger.error(`FCM send failed for token ${token}:`, error);
+					logger.error(`FCM send failed for token ${token.substring(0, 15)}...:`, error);
 
 					if (error instanceof Error && error.message.includes('invalid registration id')) {
 						await notificationService.deactivateDeviceToken(token);
@@ -467,28 +598,35 @@ export const notificationService = {
 		routeId: string;
 	}) => {
 		try {
-			logger.info(`[Notification] handleTripStarted bus=${input.busNumberPlate} trip=${input.tripId}`);
+			logger.info(`[Notification] handleTripStarted event triggered: busId=${input.busId}, plate=${input.busNumberPlate}, tripId=${input.tripId}`);
 
 			// Find all users with a stopId in this organization
 			const users = await User.find({
 				organizationId: toObjectId(input.organizationId),
 				stopId: { $exists: true, $ne: null },
-			}).select('_id notificationPreferences');
+			}).select('_id name notificationPreferences');
+
+			logger.info(`[Notification] Found ${users.length} candidate users with stops in organization ${input.organizationId}`);
 
 			if (users.length === 0) {
-				logger.info('[Notification] No users with stops found for trip started notification');
 				return;
 			}
 
 			const title = 'Trip Started';
 			const message = `Bus ${input.busNumberPlate} has started its trip. Track it live!`;
+			let notifiedCount = 0;
 
 			for (const user of users) {
+				const userId = user._id.toString();
 				const prefs = user.notificationPreferences;
+				
+				// preference check
 				if (prefs && prefs.tripStartedEnabled === false) {
+					logger.info(`[Notification] User ${user.name} (ID: ${userId}) has disabled trip start alerts. Skipping.`);
 					continue;
 				}
 
+				logger.info(`[Notification] Creating TRIP_STARTED DB record for user ${user.name} (ID: ${userId})`);
 				await Notification.create({
 					organizationId: toObjectId(input.organizationId),
 					userId: user._id,
@@ -505,23 +643,42 @@ export const notificationService = {
 					},
 				});
 
-				const deviceTokens = await notificationService.getUserDeviceTokens(user._id.toString());
+				const deviceTokens = await notificationService.getUserDeviceTokens(userId);
+				logger.info(`[Notification] User ${user.name} (ID: ${userId}) has ${deviceTokens.length} active device tokens`);
+
 				for (const token of deviceTokens) {
-					await sendPushNotification({
-						fcmToken: token,
-						title,
-						body: message,
-						data: {
-							type: NOTIFICATION_TYPES.TRIP_STARTED,
-							busId: input.busId,
-							numberPlate: input.busNumberPlate,
-							tripId: input.tripId,
-						},
-					});
+					try {
+						logger.info(`[Notification] Sending TRIP_STARTED FCM to token: ${token.substring(0, 15)}...`);
+						await sendPushNotification({
+							fcmToken: token,
+							title,
+							body: message,
+							data: {
+								type: NOTIFICATION_TYPES.TRIP_STARTED,
+								busId: input.busId,
+								numberPlate: input.busNumberPlate,
+								tripId: input.tripId,
+							},
+						});
+					} catch (error: any) {
+						const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+						const errorCode = error?.code || '';
+						logger.error(`[Notification] Failed to send TRIP_STARTED FCM to user ${userId} token:`, error);
+						if (
+							errorCode === 'messaging/registration-token-not-registered' ||
+							errorCode === 'messaging/invalid-argument' ||
+							errorMessage.includes('not registered') ||
+							errorMessage.includes('invalid') ||
+							errorMessage.includes('requested entity was not found')
+						) {
+							await notificationService.deactivateDeviceToken(token);
+						}
+					}
 				}
+				notifiedCount++;
 			}
 
-			logger.info(`[Notification] Trip started notifications sent to ${users.length} users`);
+			logger.info(`[Notification] Trip started notifications successfully processed for ${notifiedCount}/${users.length} users`);
 		} catch (error) {
 			logger.error('[Notification] handleTripStarted error:', error);
 		}
@@ -538,7 +695,7 @@ export const notificationService = {
 		routeId: string;
 	}) => {
 		try {
-			logger.info(`[Notification] handleTripCompleted bus=${input.busNumberPlate} trip=${input.tripId}`);
+			logger.info(`[Notification] handleTripCompleted event triggered: busId=${input.busId}, plate=${input.busNumberPlate}, tripId=${input.tripId}`);
 
 			// Find subscribed users for this bus
 			const subscriptions = await BusSubscription.find({
@@ -547,19 +704,25 @@ export const notificationService = {
 				isActive: true,
 			});
 
+			logger.info(`[Notification] Found ${subscriptions.length} subscribers to notify for trip completed`);
+
 			const title = 'Trip Completed';
 			const message = `Bus ${input.busNumberPlate} has completed its trip.`;
+			let notifiedCount = 0;
 
 			for (const sub of subscriptions) {
-				const user = await User.findById(sub.userId).select('_id');
+				const user = await User.findById(sub.userId).select('_id name');
 				if (!user) continue;
 
+				const userId = user._id.toString();
+
+				logger.info(`[Notification] Creating TRIP_COMPLETED DB record for user ${user.name} (ID: ${userId})`);
 				await Notification.create({
 					organizationId: toObjectId(input.organizationId),
 					userId: user._id,
 					busId: toObjectId(input.busId),
 					tripId: toObjectId(input.tripId),
-					type: NOTIFICATION_TYPES.TRIP_STARTED,
+					type: NOTIFICATION_TYPES.TRIP_COMPLETED,
 					title,
 					message,
 					payload: {
@@ -570,23 +733,42 @@ export const notificationService = {
 					},
 				});
 
-				const deviceTokens = await notificationService.getUserDeviceTokens(user._id.toString());
+				const deviceTokens = await notificationService.getUserDeviceTokens(userId);
+				logger.info(`[Notification] User ${user.name} (ID: ${userId}) has ${deviceTokens.length} active device tokens`);
+
 				for (const token of deviceTokens) {
-					await sendPushNotification({
-						fcmToken: token,
-						title,
-						body: message,
-						data: {
-							type: NOTIFICATION_TYPES.TRIP_STARTED,
-							busId: input.busId,
-							numberPlate: input.busNumberPlate,
-							tripId: input.tripId,
-						},
-					});
+					try {
+						logger.info(`[Notification] Sending TRIP_COMPLETED FCM to token: ${token.substring(0, 15)}...`);
+						await sendPushNotification({
+							fcmToken: token,
+							title,
+							body: message,
+							data: {
+								type: NOTIFICATION_TYPES.TRIP_COMPLETED,
+								busId: input.busId,
+								numberPlate: input.busNumberPlate,
+								tripId: input.tripId,
+							},
+						});
+					} catch (error: any) {
+						const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+						const errorCode = error?.code || '';
+						logger.error(`[Notification] Failed to send TRIP_COMPLETED FCM to user ${userId} token:`, error);
+						if (
+							errorCode === 'messaging/registration-token-not-registered' ||
+							errorCode === 'messaging/invalid-argument' ||
+							errorMessage.includes('not registered') ||
+							errorMessage.includes('invalid') ||
+							errorMessage.includes('requested entity was not found')
+						) {
+							await notificationService.deactivateDeviceToken(token);
+						}
+					}
 				}
+				notifiedCount++;
 			}
 
-			logger.info(`[Notification] Trip completed notifications sent to ${subscriptions.length} subscribers`);
+			logger.info(`[Notification] Trip completed notifications processed for ${notifiedCount}/${subscriptions.length} subscribers`);
 		} catch (error) {
 			logger.error('[Notification] handleTripCompleted error:', error);
 		}
@@ -605,22 +787,28 @@ export const notificationService = {
 		reason?: string;
 	}) => {
 		try {
-			logger.info(`[Notification] handleDelayAlert bus=${input.busNumberPlate} delay=${input.delayMinutes}min`);
+			logger.info(`[Notification] handleDelayAlert event triggered: busId=${input.busId}, delay=${input.delayMinutes}min`);
 
 			const users = await User.find({
 				organizationId: toObjectId(input.organizationId),
 				stopId: { $exists: true, $ne: null },
-			}).select('_id notificationPreferences');
+			}).select('_id name notificationPreferences');
+
+			logger.info(`[Notification] Found ${users.length} candidate users to notify for delay alert`);
 
 			const title = 'Bus Delayed';
 			const message = `Bus ${input.busNumberPlate} is delayed by ~${input.delayMinutes} minutes.${input.reason ? ' ' + input.reason : ''}`;
+			let notifiedCount = 0;
 
 			for (const user of users) {
+				const userId = user._id.toString();
 				const prefs = user.notificationPreferences;
 				if (prefs && prefs.delayAlertsEnabled === false) {
+					logger.info(`[Notification] User ${user.name} (ID: ${userId}) has disabled delay alerts. Skipping.`);
 					continue;
 				}
 
+				logger.info(`[Notification] Creating DELAY_ALERT DB record for user ${user.name} (ID: ${userId})`);
 				await Notification.create({
 					organizationId: toObjectId(input.organizationId),
 					userId: user._id,
@@ -637,23 +825,42 @@ export const notificationService = {
 					},
 				});
 
-				const deviceTokens = await notificationService.getUserDeviceTokens(user._id.toString());
+				const deviceTokens = await notificationService.getUserDeviceTokens(userId);
+				logger.info(`[Notification] User ${user.name} (ID: ${userId}) has ${deviceTokens.length} active device tokens`);
+
 				for (const token of deviceTokens) {
-					await sendPushNotification({
-						fcmToken: token,
-						title,
-						body: message,
-						data: {
-							type: NOTIFICATION_TYPES.DELAY_ALERT,
-							busId: input.busId,
-							numberPlate: input.busNumberPlate,
-							delayMinutes: String(input.delayMinutes),
-						},
-					});
+					try {
+						logger.info(`[Notification] Sending DELAY_ALERT FCM to token: ${token.substring(0, 15)}...`);
+						await sendPushNotification({
+							fcmToken: token,
+							title,
+							body: message,
+							data: {
+								type: NOTIFICATION_TYPES.DELAY_ALERT,
+								busId: input.busId,
+								numberPlate: input.busNumberPlate,
+								delayMinutes: String(input.delayMinutes),
+							},
+						});
+					} catch (error: any) {
+						const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+						const errorCode = error?.code || '';
+						logger.error(`[Notification] Failed to send DELAY_ALERT FCM to user ${userId} token:`, error);
+						if (
+							errorCode === 'messaging/registration-token-not-registered' ||
+							errorCode === 'messaging/invalid-argument' ||
+							errorMessage.includes('not registered') ||
+							errorMessage.includes('invalid') ||
+							errorMessage.includes('requested entity was not found')
+						) {
+							await notificationService.deactivateDeviceToken(token);
+						}
+					}
 				}
+				notifiedCount++;
 			}
 
-			logger.info(`[Notification] Delay alert sent to ${users.length} users`);
+			logger.info(`[Notification] Delay alerts successfully processed for ${notifiedCount}/${users.length} users`);
 		} catch (error) {
 			logger.error('[Notification] handleDelayAlert error:', error);
 		}

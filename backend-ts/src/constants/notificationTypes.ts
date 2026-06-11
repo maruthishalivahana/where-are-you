@@ -3,6 +3,7 @@ export const NOTIFICATION_TYPES = {
 	BUS_NEAR_STOP: 'bus_near_stop',
 	BUS_ARRIVED: 'bus_arrived',
 	TRIP_STARTED: 'trip_started',
+	TRIP_COMPLETED: 'trip_completed',
 	DELAY_ALERT: 'delay_alert',
 } as const;
 

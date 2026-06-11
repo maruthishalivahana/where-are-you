@@ -16,20 +16,52 @@ export const sendPushNotification = async ({
 }: SendPushParams): Promise<void> => {
     const messaging = getFirebaseMessaging();
     if (!messaging) {
+        logger.warn('[FCM] Firebase messaging not initialized — push notification skipped');
         return;
     }
 
-    try {
-        await messaging.send({
-            token: fcmToken,
+    const message = {
+        token: fcmToken,
+        notification: {
+            title,
+            body,
+        },
+        data,
+        android: {
+            priority: 'high' as const,
             notification: {
                 title,
                 body,
+                channelId: 'default',
+                priority: 'high' as const,
+                defaultSound: true,
+                defaultVibrateTimings: true,
+                notificationCount: 1,
             },
-            data,
-        });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown push error';
-        logger.warn(`Push notification failed: ${message}`);
+        },
+        apns: {
+            payload: {
+                aps: {
+                    alert: {
+                        title,
+                        body,
+                    },
+                    sound: 'default',
+                    badge: 1,
+                },
+            },
+        },
+    };
+
+    try {
+        const messageId = await messaging.send(message);
+        logger.info(`[FCM] Push sent successfully — messageId: ${messageId}, token: ${fcmToken.substring(0, 15)}...`);
+    } catch (error: any) {
+        const errorCode = error?.code || 'unknown';
+        const errorMessage = error instanceof Error ? error.message : 'Unknown push error';
+        logger.error(`[FCM] Push notification FAILED — code: ${errorCode}, message: ${errorMessage}, token: ${fcmToken.substring(0, 15)}...`);
+
+        // Re-throw so callers can handle invalid tokens
+        throw error;
     }
 };

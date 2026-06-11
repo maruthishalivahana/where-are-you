@@ -13,6 +13,7 @@ export interface IBusSubscription extends Document {
     isActive: boolean;
     lastStartNotifiedAt?: Date | null;
     lastNearStopNotifiedAt?: Date | null;
+    lastArrivedNotifiedAt?: Date | null;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -31,6 +32,7 @@ const BusSubscriptionSchema = new Schema<IBusSubscription>(
         isActive: { type: Boolean, default: true },
         lastStartNotifiedAt: { type: Date, default: null },
         lastNearStopNotifiedAt: { type: Date, default: null },
+        lastArrivedNotifiedAt: { type: Date, default: null },
     },
     { timestamps: true }
 );
