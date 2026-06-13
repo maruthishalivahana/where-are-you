@@ -25,6 +25,7 @@ import { planRouter } from './modules/plan/plan.routes';
 import { paymentRouter } from './modules/payment/payment.routes';
 import { paymentWebhookRouter } from './modules/payment/payment.webhook.routes';
 import { simulationRouter } from './modules/notification/simulation.routes';
+import { locationRouter } from './modules/location/location.routes';
 
 const app = express();
 
@@ -126,6 +127,7 @@ app.use('/api/trip', tripRouter);
 app.use('/api/user', userAppRouter);
 app.use('/api/user/notifications', notificationRouter);
 app.use('/api/notifications', deviceTokenRoutes);
+app.use('/api/location', locationRouter);
 app.use('/api/debug', routeDebugRouter);
 app.use('/api/debug/notifications', simulationRouter);
 
