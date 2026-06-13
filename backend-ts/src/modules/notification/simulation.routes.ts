@@ -10,3 +10,4 @@ export const simulationRouter = Router();
 simulationRouter.use(requireAuth, requireRole(ROLES.ADMIN));
 
 simulationRouter.post('/simulate', simulationController.simulate);
+simulationRouter.post('/test-push', simulationController.testPush);
