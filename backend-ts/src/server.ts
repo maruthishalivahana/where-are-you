@@ -19,7 +19,6 @@ import { tripRouter } from './modules/trip/trip.routes';
 import { initSocket } from './websocket/socket.server';
 import { notificationRouter } from './modules/notification/notification.routes';
 import { deviceTokenRoutes } from './modules/notification/deviceToken.routes';
-import { initializeNotificationListeners } from './modules/notification/notification.events';
 import { routeDebugRouter } from './modules/route/route.debug.routes';
 import { planRouter } from './modules/plan/plan.routes';
 import { paymentRouter } from './modules/payment/payment.routes';
@@ -155,9 +154,6 @@ connectDB()
 
         const server = createServer(app);
         initSocket(server);
-
-        // Initialize notification event listeners
-        initializeNotificationListeners();
 
         const port = Number(ENV.PORT) || 3000;
         const host = '0.0.0.0';
