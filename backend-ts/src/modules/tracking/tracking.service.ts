@@ -644,6 +644,7 @@ export const trackingService = {
             latitude: smoothedLatitude,
             longitude: smoothedLongitude,
             isBusStartedEvent: tripUpdate.isBusStartedEvent,
+            timestamp: recordedAt,
         });
 
         emitBusLocationSafely({

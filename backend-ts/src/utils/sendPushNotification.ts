@@ -20,6 +20,8 @@ export const sendPushNotification = async ({
         return;
     }
 
+    logger.info(`[FCM SEND] token=${fcmToken.substring(0, 15)}..., title=${title}`);
+
     const message = {
         token: fcmToken,
         notification: {
@@ -53,13 +55,18 @@ export const sendPushNotification = async ({
         },
     };
 
+    logger.info(`[VOICE MESSAGE] voiceMessage="${data.voiceMessage || ''}"`);
+    logger.info(`[FCM PAYLOAD BEFORE SEND] ${JSON.stringify(message)}`);
+
     try {
         const messageId = await messaging.send(message);
-        logger.info(`[FCM] Push sent successfully — messageId: ${messageId}, token: ${fcmToken.substring(0, 15)}...`);
+        logger.info(`[FCM SUCCESS] messageId=${messageId}, token=${fcmToken.substring(0, 15)}...`);
+        logger.info(`[VOICE MESSAGE SENT] voiceMessage="${data.voiceMessage || ''}"`);
+        logger.info(`[FCM SEND SUCCESS] messageId=${messageId}`);
     } catch (error: any) {
         const errorCode = error?.code || 'unknown';
         const errorMessage = error instanceof Error ? error.message : 'Unknown push error';
-        logger.error(`[FCM] Push notification FAILED — code: ${errorCode}, message: ${errorMessage}, token: ${fcmToken.substring(0, 15)}...`);
+        logger.error(`[FCM FAILURE] token=${fcmToken.substring(0, 15)}..., errorCode=${errorCode}, error=${errorMessage}`);
 
         // Re-throw so callers can handle invalid tokens
         throw error;

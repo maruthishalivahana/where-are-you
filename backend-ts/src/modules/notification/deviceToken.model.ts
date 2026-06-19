@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IDeviceToken extends Document {
-  userId: mongoose.Schema.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
   deviceToken: string;
   deviceType: 'ios' | 'android' | 'web';
   isActive: boolean;

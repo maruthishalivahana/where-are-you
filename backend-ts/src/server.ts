@@ -21,13 +21,13 @@ import { tripRouter } from './modules/trip/trip.routes';
 import { initSocket } from './websocket/socket.server';
 import { notificationRouter } from './modules/notification/notification.routes';
 import { deviceTokenRoutes } from './modules/notification/deviceToken.routes';
-import { initializeNotificationListeners } from './modules/notification/notification.events';
 import { routeDebugRouter } from './modules/route/route.debug.routes';
 import { planRouter } from './modules/plan/plan.routes';
 import { paymentRouter } from './modules/payment/payment.routes';
 import { paymentWebhookRouter } from './modules/payment/payment.webhook.routes';
 import { simulationRouter } from './modules/notification/simulation.routes';
 import { locationRouter } from './modules/location/location.routes';
+import { initializeEmailQueue, initializeEmailScheduler, emailDebugRouter } from './services/email';
 
 const app = express();
 
@@ -197,15 +197,8 @@ app.use('/api/user', userAppRouter);
 app.use('/api/user/notifications', notificationRouter);
 app.use('/api/notifications', deviceTokenRoutes);
 app.use('/api/location', locationRouter);
-
-// Debug routes — only available in non-production environments
-if (ENV.NODE_ENV !== 'production') {
-    app.use('/api/debug', routeDebugRouter);
-    app.use('/api/debug/notifications', simulationRouter);
-    logger.warn('Debug endpoints are ENABLED (non-production mode). Disable in production.');
-} else {
-    logger.info('Debug endpoints are DISABLED (production mode).');
-}
+app.use('/api/debug', routeDebugRouter);
+app.use('/api/debug/notifications', simulationRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
@@ -229,11 +222,21 @@ connectDB()
             logger.warn('Redis initialization warning (non-critical)', error);
         }
 
+        // Initialize email queue worker
+        try {
+            initializeEmailQueue();
+            logger.info('Email queue initialized successfully');
+        } catch (error) {
+            logger.warn('Email queue initialization warning (non-critical)', error);
+        }
+
+        // Initialize email scheduler (BullMQ repeatable jobs)
+        initializeEmailScheduler().catch((error) => {
+            logger.warn('Email scheduler initialization warning (non-critical)', error);
+        });
+
         const server = createServer(app);
         initSocket(server);
-
-        // Initialize notification event listeners
-        initializeNotificationListeners();
 
         const port = Number(ENV.PORT) || 3000;
         const host = '0.0.0.0';

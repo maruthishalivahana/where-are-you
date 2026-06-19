@@ -367,6 +367,7 @@ export const batchTrackingService = {
                     latitude: latestLocation.latitude,
                     longitude: latestLocation.longitude,
                     isBusStartedEvent: false, // Trip start is handled by startTripForDriver
+                    timestamp: new Date(latestLocation.timestamp),
                 });
             } catch (notifError) {
                 logger.warn(`[BatchTracking] Notification processing failed (non-critical): ${notifError instanceof Error ? notifError.message : 'Unknown'}`);

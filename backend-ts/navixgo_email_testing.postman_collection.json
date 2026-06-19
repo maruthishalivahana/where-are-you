@@ -1,0 +1,503 @@
+{
+	"info": {
+		"_postman_id": "2e06180a-9d9f-4b0e-b7d1-58f7e2d93e15",
+		"name": "NavixGo Email System Testing",
+		"description": "Endpoints to test and verify the NavixGo Email Communication System (templates, delivery logs, BullMQ queue status, and daily schedulers).",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Authentication",
+			"item": [
+				{
+					"name": "Admin Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const responseJson = pm.response.json();",
+									"if (responseJson && responseJson.accessToken) {",
+									"    pm.collectionVariables.set(\"token\", responseJson.accessToken);",
+									"    console.log(\"Saved accessToken to collection variable 'token'\");",
+									"}"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"admin@navixgo.in\",\n    \"password\": \"AdminPassword123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/admin/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"admin",
+								"login"
+							]
+						},
+						"description": "Log in as an Admin to obtain the accessToken. The test script will automatically save the token for subsequent requests."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "2. Send Test Emails",
+			"item": [
+				{
+					"name": "Send Welcome Email",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"to\": \"recipient@example.com\",\n    \"templateName\": \"WELCOME\",\n    \"data\": {\n        \"adminName\": \"Nanda Kishor\",\n        \"organizationName\": \"NavixGo Fleet Managers\",\n        \"loginUrl\": \"https://navixgo.in/login\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/test-send",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"test-send"
+							]
+						},
+						"description": "Sends a Welcome email using the onboarding template."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Trial Activated Email",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"to\": \"recipient@example.com\",\n    \"templateName\": \"TRIAL_ACTIVATED\",\n    \"data\": {\n        \"adminName\": \"Nanda Kishor\",\n        \"organizationName\": \"NavixGo Fleet Managers\",\n        \"busLimit\": 5,\n        \"expiryDate\": \"2026-06-26\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/test-send",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"test-send"
+							]
+						},
+						"description": "Sends a Trial Activated confirmation email."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Trial Expiring Email",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"to\": \"recipient@example.com\",\n    \"templateName\": \"TRIAL_EXPIRING\",\n    \"data\": {\n        \"adminName\": \"Nanda Kishor\",\n        \"organizationName\": \"NavixGo Fleet Managers\",\n        \"daysRemaining\": 2,\n        \"upgradeUrl\": \"https://navixgo.in/billing/upgrade\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/test-send",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"test-send"
+							]
+						},
+						"description": "Sends a Warning email reminding the admin that their trial or subscription is expiring soon."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Payment Success Email",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"to\": \"recipient@example.com\",\n    \"templateName\": \"PAYMENT_SUCCESS\",\n    \"data\": {\n        \"adminName\": \"Nanda Kishor\",\n        \"planName\": \"Growth Plan (Standard)\",\n        \"busCount\": 10,\n        \"amount\": \"4999.00\",\n        \"currency\": \"INR\",\n        \"expiryDate\": \"2026-07-19\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/test-send",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"test-send"
+							]
+						},
+						"description": "Sends a payment receipt email upon subscription payment success."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Payment Failed Email",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"to\": \"recipient@example.com\",\n    \"templateName\": \"PAYMENT_FAILED\",\n    \"data\": {\n        \"adminName\": \"Nanda Kishor\",\n        \"planName\": \"Growth Plan\",\n        \"reason\": \"Card limit exceeded or transaction declined by issuer\",\n        \"retryUrl\": \"https://navixgo.in/billing/retry\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/test-send",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"test-send"
+							]
+						},
+						"description": "Sends a payment failed alert email."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Plan Expired Email",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"to\": \"recipient@example.com\",\n    \"templateName\": \"PLAN_EXPIRED\",\n    \"data\": {\n        \"adminName\": \"Nanda Kishor\",\n        \"organizationName\": \"NavixGo Fleet Managers\",\n        \"expiredPlanName\": \"Growth Plan\",\n        \"renewUrl\": \"https://navixgo.in/billing/renew\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/test-send",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"test-send"
+							]
+						},
+						"description": "Sends an expired plan alert email."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Custom HTML Email",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"to\": \"recipient@example.com\",\n    \"templateName\": \"CUSTOM\",\n    \"data\": {\n        \"recipientName\": \"Nanda Kishor\",\n        \"recipientRole\": \"admin\",\n        \"subject\": \"General Update: Maintenance scheduled\",\n        \"html\": \"<h1>System Maintenance Notification</h1><p>Dear Administrator,</p><p>We will be performing a database upgrade on Sunday between 2:00 AM and 4:00 AM UTC. No action is required on your part.</p>\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/test-send",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"test-send"
+							]
+						},
+						"description": "Sends a custom-formatted raw HTML email."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "3. Diagnostics & Scheduler",
+			"item": [
+				{
+					"name": "Get Email Logs",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/logs?page=1&limit=20&allTenants=true",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"logs"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "20"
+								},
+								{
+									"key": "status",
+									"value": "sent",
+									"disabled": true
+								},
+								{
+									"key": "allTenants",
+									"value": "true",
+									"description": "Set to true to view logs across all organizations. Otherwise returns only current user's organization."
+								}
+							]
+						},
+						"description": "Fetch historical log records of sent, queued, or failed emails."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Email Stats & Queue status",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/stats?allTenants=true",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"stats"
+							],
+							"query": [
+								{
+									"key": "allTenants",
+									"value": "true",
+									"description": "Set to true to see overall system statistics. If false, shows stats for the active tenant only."
+								}
+							]
+						},
+						"description": "Retrieves general email delivery stats from Mongoose logs and fetches direct queue job counts (active, completed, waiting, failed, delayed) from BullMQ."
+					},
+					"response": []
+				},
+				{
+					"name": "Trigger Daily Expiry Job Manually",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/debug/email/trigger-scheduler",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"debug",
+								"email",
+								"trigger-scheduler"
+							]
+						},
+						"description": "Manually triggers the daily repeatable BullMQ job that queries expiring or expired trial/paid subscriptions and dispatches reminder notifications."
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

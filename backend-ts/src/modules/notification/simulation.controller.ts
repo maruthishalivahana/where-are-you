@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { Bus } from '../bus/bus.model';
 import { Trip } from '../trip/trip.model';
 import { Stop } from '../stop/stop.model';
+import { User } from '../user/user.model';
 import { notificationService } from './notification.service';
 import { logger } from '../../utils/logger';
 
@@ -144,6 +145,7 @@ export const simulationController = {
 						latitude: nearLat,
 						longitude: nearLng,
 						isBusStartedEvent: false,
+						timestamp: new Date(),
 					});
 
 					result.message = `Bus near stop notification triggered (simulated ~100m from ${stop.name})`;
@@ -175,6 +177,7 @@ export const simulationController = {
 						latitude: atLat,
 						longitude: atLng,
 						isBusStartedEvent: false,
+						timestamp: new Date(),
 					});
 
 					result.message = `Bus arrived notification triggered (simulated at ${arrStop.name})`;
@@ -208,6 +211,94 @@ export const simulationController = {
 		} catch (error) {
 			logger.error('[Simulation] Error:', error);
 			res.status(400).json({ message: getMessage(error) });
+		}
+	},
+
+	/**
+	 * POST /api/debug/notifications/test-push
+	 *
+	 * Send an end-to-end test push notification to a specific user (via userId or email) or direct deviceToken.
+	 */
+	testPush: async (req: Request, res: Response): Promise<void> => {
+		try {
+			const organizationId = req.user?.organizationId;
+			if (!organizationId) {
+				res.status(401).json({ message: 'Unauthorized' });
+				return;
+			}
+
+			const { userId, email, deviceToken, title, body, data } = req.body;
+
+			const pushTitle = title || 'Test Push Notification';
+			const pushBody = body || 'This is a test notification from NavixGo backend.';
+			const pushData = data || { type: 'test', sentAt: new Date().toISOString() };
+
+			let tokens: string[] = [];
+
+			if (deviceToken) {
+				tokens = [deviceToken];
+				logger.info(`[TestPush] Using direct device token: ${deviceToken.substring(0, 15)}...`);
+			} else if (userId) {
+				tokens = await notificationService.getUserDeviceTokens(userId);
+				logger.info(`[TestPush] Found ${tokens.length} device tokens for userId=${userId}`);
+			} else if (email) {
+				const user = await User.findOne({ email, organizationId }).select('_id');
+				if (!user) {
+					res.status(404).json({ message: `User with email ${email} not found` });
+					return;
+				}
+				tokens = await notificationService.getUserDeviceTokens(String(user._id));
+				logger.info(`[TestPush] Found ${tokens.length} device tokens for email=${email} (userId=${user._id})`);
+			} else {
+				res.status(400).json({
+					message: 'Please provide either deviceToken, userId, or email',
+				});
+				return;
+			}
+
+			if (tokens.length === 0) {
+				res.status(404).json({
+					message: 'No active device tokens found for the specified target. Make sure the device has registered token first.',
+				});
+				return;
+			}
+
+			const results: Array<{ token: string; success: boolean; error?: string; messageId?: string }> = [];
+			const { sendPushNotification } = await import('../../utils/sendPushNotification');
+
+			for (const token of tokens) {
+				try {
+					await sendPushNotification({
+						fcmToken: token,
+						title: pushTitle,
+						body: pushBody,
+						data: pushData,
+					});
+					results.push({
+						token: token.substring(0, 15) + '...',
+						success: true,
+					});
+				} catch (err: any) {
+					results.push({
+						token: token.substring(0, 15) + '...',
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			}
+
+			res.status(200).json({
+				message: 'Test push execution completed',
+				summary: {
+					total: tokens.length,
+					success: results.filter((r) => r.success).length,
+					failure: results.filter((r) => !r.success).length,
+				},
+				results,
+			});
+		} catch (error) {
+			logger.error('[TestPush] Error:', error);
+			res.status(500).json({ message: getMessage(error) });
 		}
 	},
 };

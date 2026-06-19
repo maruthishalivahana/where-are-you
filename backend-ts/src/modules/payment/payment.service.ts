@@ -4,6 +4,9 @@ import { Payment } from './payment.model';
 import { ENV } from '../../config/env.config';
 import { getPlanDefinition } from '../plan/plan.catalog';
 import { OrganizationPlanSubscription } from '../plan/organizationPlan.model';
+import { Admin } from '../admin/admin.model';
+import { Organization } from '../organization/organization.model';
+import { emailService } from '../../services/email';
 
 const RAZORPAY_ORDERS_URL = 'https://api.razorpay.com/v1/orders';
 
@@ -151,6 +154,30 @@ export const paymentService = {
         payment.paidAt = new Date();
         await payment.save();
 
+        // Fire-and-forget payment success email
+        (async () => {
+            try {
+                const admin = await Admin.findOne({ organizationId: params.organizationId }).lean();
+                if (admin?.email) {
+                    const plan = getPlanDefinition(payment.planCode);
+                    await emailService.sendPaymentSuccessEmail({
+                        adminEmail: admin.email,
+                        adminName: admin.name,
+                        organizationId: params.organizationId,
+                        planName: plan?.name || payment.planCode,
+                        busCount: payment.busCount,
+                        amount: (payment.amount / 100).toFixed(2),
+                        currency: payment.currency,
+                        expiryDate: new Date(
+                            Date.now() + (plan?.durationDays || 30) * 24 * 60 * 60 * 1000
+                        ).toLocaleDateString('en-IN', {
+                            year: 'numeric', month: 'long', day: 'numeric',
+                        }),
+                    });
+                }
+            } catch { /* logged inside emailService */ }
+        })();
+
         return payment;
     },
 
@@ -195,6 +222,23 @@ export const paymentService = {
         payment.status = 'failed';
         payment.notes = { ...(payment.notes || {}), failureReason: reason };
         await payment.save();
+
+        // Fire-and-forget payment failed email
+        (async () => {
+            try {
+                const admin = await Admin.findOne({ organizationId: payment.organizationId }).lean();
+                if (admin?.email) {
+                    const plan = getPlanDefinition(payment.planCode);
+                    await emailService.sendPaymentFailedEmail({
+                        adminEmail: admin.email,
+                        adminName: admin.name,
+                        organizationId: String(payment.organizationId),
+                        planName: plan?.name || payment.planCode,
+                        reason,
+                    });
+                }
+            } catch { /* logged inside emailService */ }
+        })();
 
         const subscriptionDocument = await OrganizationPlanSubscription.findOne({ organizationId: payment.organizationId });
         if (subscriptionDocument) {

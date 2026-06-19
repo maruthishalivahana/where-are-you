@@ -8,6 +8,7 @@ import { comparePassword } from '../../utils/comparePassword';
 import { generateTokens } from '../../utils/generateTokens';
 import { hashPassword } from '../../utils/hashPassword';
 import { planService } from '../plan/plan.service';
+import { emailService } from '../../services/email';
 
 interface AdminSignupInput {
 	name: string;
@@ -82,6 +83,15 @@ export const authService = {
 			organizationId: String(admin.organizationId),
 			role: ROLES.ADMIN,
 		});
+
+		// Fire-and-forget welcome email (never blocks the signup response)
+		emailService.sendWelcomeEmail({
+			adminEmail: admin.email,
+			adminName: admin.name,
+			organizationName: organization.name,
+			organizationId: String(organization._id),
+			adminId: String(admin._id),
+		}).catch(() => { /* logged inside emailService */ });
 
 		return {
 			accessToken,

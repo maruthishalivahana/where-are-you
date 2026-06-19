@@ -1,7 +1,10 @@
 import { Bus } from '../bus/bus.model';
 import { Payment } from '../payment/payment.model';
+import { Admin } from '../admin/admin.model';
+import { Organization } from '../organization/organization.model';
 import { OrganizationPlanSubscription } from './organizationPlan.model';
 import { getPlanDefinition, PLAN_CATALOG } from './plan.catalog';
+import { emailService } from '../../services/email';
 
 const getNow = (): Date => new Date();
 
@@ -342,6 +345,26 @@ export const planService = {
         subscriptionDocument.currentPlanActivationSource = 'trial';
 
         await subscriptionDocument.save();
+
+        // Fire-and-forget trial activated email
+        (async () => {
+            try {
+                const admin = await Admin.findOne({ organizationId }).lean();
+                const org = await Organization.findById(organizationId).lean();
+                if (admin?.email && org) {
+                    await emailService.sendTrialActivatedEmail({
+                        adminEmail: admin.email,
+                        adminName: admin.name,
+                        organizationName: org.name,
+                        organizationId,
+                        busLimit,
+                        expiryDate: endsAt.toLocaleDateString('en-IN', {
+                            year: 'numeric', month: 'long', day: 'numeric',
+                        }),
+                    });
+                }
+            } catch { /* logged inside emailService */ }
+        })();
 
         return buildPlanResponse(subscriptionDocument, currentBusCount);
     },
