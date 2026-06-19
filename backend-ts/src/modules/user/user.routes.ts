@@ -16,7 +16,7 @@ const updateUserSchema = z.object({
         routeId: z.string().min(1, 'routeId cannot be empty').optional(),
         email: z.string().email('invalid email address').optional(),
         phone: z.string().min(7, 'phone must be at least 7 characters').max(20, 'phone must be at most 20 characters').optional(),
-        password: z.string().min(6, 'password must be at least 6 characters').optional(),
+        password: z.string().min(8, 'password must be at least 8 characters').optional(),
     }),
 });
 

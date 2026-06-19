@@ -6,6 +6,7 @@ import { getBusRoom, getRouteRoom, getTripRoom } from './socket.rooms';
 import { ROLES } from '../constants/roles';
 import { Bus } from '../modules/bus/bus.model';
 import { Route } from '../modules/route/route.model';
+import { Trip } from '../modules/trip/trip.model';
 
 /**
  * REFACTORED Socket Handlers
@@ -157,6 +158,7 @@ export const registerSocketHandlers = (socket: Socket): void => {
 
 	/**
 	 * Passenger/Admin joins trip room to receive location updates for a specific trip
+	 * SECURITY: Trip is verified against the user's organizationId before joining
 	 */
 	socket.on(TRACKING_EVENTS.JOIN_TRIP_ROOM, async (tripId: string) => {
 		console.log('🚨 JOIN_TRIP_ROOM HANDLER HIT', {
@@ -182,12 +184,24 @@ export const registerSocketHandlers = (socket: Socket): void => {
 			}
 
 			const trimmed = tripId.trim();
-			// basic validation for ObjectId
 			if (!mongoose.isValidObjectId(trimmed)) {
 				return;
 			}
 
-			const room = getTripRoom(trimmed);
+			// SECURITY: Verify trip belongs to user's organization before joining room
+			const trip = await Trip.findOne({
+				_id: trimmed,
+				organizationId: socket.data.user.organizationId,
+			}).select('_id');
+
+			if (!trip) {
+				logger.warn(
+					`joinTripRoom denied: trip not found or org mismatch, socket=${socket.id}, tripId=${trimmed}`
+				);
+				return;
+			}
+
+			const room = getTripRoom(String(trip._id));
 			socket.join(room);
 			console.log('[SOCKET ROOM JOIN]', { roomId: room, socketId: socket.id, timestamp: new Date().toISOString() });
 			logger.info(`Socket ${socket.id} joined trip room: ${room}`);

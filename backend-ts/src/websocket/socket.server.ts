@@ -24,12 +24,15 @@ const isAllowedOrigin = (origin: string | undefined): boolean => {
 	}
 
 	const normalizedOrigin = normalizeOrigin(origin);
+
+	// Security: do NOT allow null origin (sandboxed iframes, file:// URIs)
 	if (normalizedOrigin === 'null') {
-		return true;
+		return false;
 	}
 
+	// Security: if no origins configured in production, deny all — fail closed
 	if (configuredOrigins.size === 0) {
-		return true;
+		return false;
 	}
 
 	return configuredOrigins.has(normalizedOrigin);

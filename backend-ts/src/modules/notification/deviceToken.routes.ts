@@ -1,30 +1,37 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { notificationService } from './notification.service';
 import { requireAuth } from '../../middleware/auth.middleware';
+import { validate } from '../../middleware/validate.middleware';
 import { logger } from '../../utils/logger';
 
 const router = Router();
+
+const registerDeviceSchema = z.object({
+	body: z.object({
+		deviceToken: z
+			.string()
+			.min(10, 'deviceToken is too short')
+			.max(4096, 'deviceToken is too long'),
+		deviceType: z.enum(['ios', 'android', 'web'], {
+			error: 'deviceType must be one of: ios, android, web',
+		}),
+	}),
+});
 
 /**
  * Register device token for FCM
  * POST /api/notifications/register-device
  */
-router.post('/register-device', requireAuth, async (req, res) => {
+router.post('/register-device', requireAuth, validate(registerDeviceSchema), async (req, res) => {
 	try {
 		const { deviceToken, deviceType } = req.body;
 		const userId = req.user?.sub;
 
-		if (!userId || !deviceToken || !deviceType) {
-			return res.status(400).json({
+		if (!userId) {
+			return res.status(401).json({
 				success: false,
-				message: 'Missing required fields: userId, deviceToken, deviceType',
-			});
-		}
-
-		if (!['ios', 'android', 'web'].includes(deviceType)) {
-			return res.status(400).json({
-				success: false,
-				message: 'Invalid deviceType. Must be: ios, android, or web',
+				message: 'Unauthorized',
 			});
 		}
 
@@ -47,7 +54,6 @@ router.post('/register-device', requireAuth, async (req, res) => {
 		res.status(500).json({
 			success: false,
 			message: 'Internal server error',
-			error: error instanceof Error ? error.message : 'Unknown error',
 		});
 	}
 });

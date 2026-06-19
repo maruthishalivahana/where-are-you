@@ -41,13 +41,35 @@ const parseMobileOrigins = (): string[] => {
     );
 };
 
+// ---------------------------------------------------------------------------
+// Startup security validation — fail fast on missing / placeholder secrets
+// ---------------------------------------------------------------------------
+const PLACEHOLDER_SECRETS = new Set([
+    'change-me-secret',
+    'change-me-refresh-secret',
+    'your-jwt-secret',
+    'secret',
+    '',
+]);
+
+const requireSecret = (envVarName: string): string => {
+    const value = process.env[envVarName];
+    if (!value || PLACEHOLDER_SECRETS.has(value.trim())) {
+        throw new Error(
+            `FATAL: Environment variable "${envVarName}" is missing or uses a placeholder value. ` +
+            `Set a cryptographically random secret before starting the server.`
+        );
+    }
+    return value.trim();
+};
+
 export const ENV = {
     PORT: process.env.PORT || 3000,
     MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/where-you-are',
     NODE_ENV: process.env.NODE_ENV || 'development',
-    JWT_SECRET: process.env.JWT_SECRET || 'change-me-secret',
+    JWT_SECRET: requireSecret('JWT_SECRET'),
     JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
-    REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET || 'change-me-refresh-secret',
+    REFRESH_TOKEN_SECRET: requireSecret('REFRESH_TOKEN_SECRET'),
     REFRESH_TOKEN_EXPIRES_IN: process.env.REFRESH_TOKEN_EXPIRES_IN || '30d',
     GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY || '',
     TRACKING_UPDATE_INTERVAL_MS: parseNumber(process.env.TRACKING_UPDATE_INTERVAL_MS, 5000),

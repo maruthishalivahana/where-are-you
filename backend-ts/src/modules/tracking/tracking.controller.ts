@@ -3,6 +3,9 @@ import { trackingService } from './tracking.service';
 import { batchTrackingService } from '../../services/batch-tracking.service';
 import { logger } from '../../utils/logger';
 import { ROLES } from '../../constants/roles';
+import { Driver } from '../driver/driver.model';
+import { Trip } from '../trip/trip.model';
+import { Bus } from '../bus/bus.model';
 
 const getMessage = (error: unknown): string =>
 	error instanceof Error ? error.message : 'Something went wrong';
@@ -239,6 +242,7 @@ export const trackingController = {
 	/**
 	 * GET: Retrieve current cached driver location
 	 * GET /api/tracking/driver/:driverId/location
+	 * SECURITY: Verifies driverId belongs to the requesting user's organization
 	 */
 	getDriverLocation: async (req: Request, res: Response): Promise<void> => {
 		try {
@@ -251,6 +255,16 @@ export const trackingController = {
 
 			if (!driverId) {
 				res.status(400).json({ message: 'driverId is required' });
+				return;
+			}
+
+			// SECURITY: Verify driverId belongs to the requesting user's organization
+			const driverExists = await Driver.exists({
+				_id: driverId,
+				organizationId: req.user.organizationId,
+			});
+			if (!driverExists) {
+				res.status(404).json({ message: 'Driver not found' });
 				return;
 			}
 
@@ -294,6 +308,7 @@ export const trackingController = {
 	/**
 	 * GET: Retrieve current cached trip location (latest bus location)
 	 * GET /api/tracking/trip/:tripId/location
+	 * SECURITY: Verifies tripId belongs to the requesting user's organization
 	 */
 	getTripLocation: async (req: Request, res: Response): Promise<void> => {
 		try {
@@ -306,6 +321,16 @@ export const trackingController = {
 
 			if (!tripId) {
 				res.status(400).json({ message: 'tripId is required' });
+				return;
+			}
+
+			// SECURITY: Verify tripId belongs to the requesting user's organization
+			const tripExists = await Trip.exists({
+				_id: tripId,
+				organizationId: req.user.organizationId,
+			});
+			if (!tripExists) {
+				res.status(404).json({ message: 'Trip not found' });
 				return;
 			}
 
@@ -348,6 +373,7 @@ export const trackingController = {
 	/**
 	 * GET: Retrieve current cached bus location
 	 * GET /api/tracking/bus/:busId/location
+	 * SECURITY: Verifies busId belongs to the requesting user's organization
 	 */
 	getBusLocation: async (req: Request, res: Response): Promise<void> => {
 		try {
@@ -360,6 +386,16 @@ export const trackingController = {
 
 			if (!busId) {
 				res.status(400).json({ message: 'busId is required' });
+				return;
+			}
+
+			// SECURITY: Verify busId belongs to the requesting user's organization
+			const busExists = await Bus.exists({
+				_id: busId,
+				organizationId: req.user.organizationId,
+			});
+			if (!busExists) {
+				res.status(404).json({ message: 'Bus not found' });
 				return;
 			}
 

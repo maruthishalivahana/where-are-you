@@ -14,6 +14,9 @@ import { DeviceToken } from '../notification/deviceToken.model';
 
 const toObjectId = (id: string) => new mongoose.Types.ObjectId(id);
 
+/** Escape special regex characters to prevent ReDoS from user-supplied search strings */
+const escapeRegex = (str: string): string => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const formatUser = (user: any) => {
     const route = user.routeId as any;
 
@@ -51,10 +54,10 @@ export const userService = {
             ...(query
                 ? {
                     $or: [
-                        { name: { $regex: query, $options: 'i' } },
-                        { memberId: { $regex: query, $options: 'i' } },
-                        { email: { $regex: query, $options: 'i' } },
-                        { phone: { $regex: query, $options: 'i' } },
+                        { name: { $regex: escapeRegex(query), $options: 'i' } },
+                        { memberId: { $regex: escapeRegex(query), $options: 'i' } },
+                        { email: { $regex: escapeRegex(query), $options: 'i' } },
+                        { phone: { $regex: escapeRegex(query), $options: 'i' } },
                     ],
                 }
                 : {}),

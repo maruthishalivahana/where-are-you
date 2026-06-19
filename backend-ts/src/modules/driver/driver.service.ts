@@ -9,6 +9,9 @@ import { tripService } from '../trip/trip.service';
 import { hashPassword } from '../../utils/hashPassword';
 import { ENV } from '../../config/env.config';
 
+/** Escape special regex characters to prevent ReDoS from user-supplied search strings */
+const escapeRegex = (str: string): string => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const formatBusSnapshot = (bus: any, activeTrip: any) => {
     if (!bus) {
         return null;
@@ -114,10 +117,10 @@ export const driverService = {
             ...(query
                 ? {
                     $or: [
-                        { name: { $regex: query, $options: 'i' } },
-                        { memberId: { $regex: query, $options: 'i' } },
-                        { email: { $regex: query, $options: 'i' } },
-                        { phone: { $regex: query, $options: 'i' } },
+                        { name: { $regex: escapeRegex(query), $options: 'i' } },
+                        { memberId: { $regex: escapeRegex(query), $options: 'i' } },
+                        { email: { $regex: escapeRegex(query), $options: 'i' } },
+                        { phone: { $regex: escapeRegex(query), $options: 'i' } },
                     ],
                 }
                 : {}),

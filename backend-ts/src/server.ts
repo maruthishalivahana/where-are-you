@@ -2,6 +2,8 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { connectDB } from './config/db.config';
 import { getRedisClient } from './config/redis.config';
 import { ENV } from './config/env.config';
@@ -29,6 +31,62 @@ import { locationRouter } from './modules/location/location.routes';
 
 const app = express();
 
+// ---------------------------------------------------------------------------
+// Security: HTTP security headers (helmet)
+// ---------------------------------------------------------------------------
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", 'data:', 'https:'],
+            connectSrc: ["'self'"],
+            fontSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            mediaSrc: ["'self'"],
+            frameSrc: ["'none'"],
+        },
+    },
+    crossOriginEmbedderPolicy: false, // Relax for API servers
+}));
+
+// ---------------------------------------------------------------------------
+// Security: Rate limiting
+// ---------------------------------------------------------------------------
+
+/** Strict limiter for login endpoints — blocks brute-force attacks */
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Too many login attempts. Please try again in 15 minutes.' },
+    skip: () => ENV.NODE_ENV === 'test',
+});
+
+/** Loose limiter for signup / token refresh */
+const signupLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Too many requests. Please try again later.' },
+    skip: () => ENV.NODE_ENV === 'test',
+});
+
+/** Baseline global limiter — lightweight DDoS backstop */
+const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 500,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Too many requests. Please try again later.' },
+    skip: () => ENV.NODE_ENV !== 'production',
+});
+
+app.use(globalLimiter);
+
 const normalizeOrigin = (origin: string): string => origin.trim().replace(/\/+$/, '');
 
 const configuredOrigins = new Set([
@@ -46,12 +104,17 @@ const isAllowedOrigin = (origin: string | undefined): boolean => {
     }
 
     const normalizedOrigin = normalizeOrigin(origin);
+
+    // Security: do NOT allow requests from null origin (sandboxed iframes, file:// URIs)
     if (normalizedOrigin === 'null') {
-        return true;
+        logger.warn(`CORS blocked null origin`);
+        return false;
     }
 
+    // Security: if no origins configured in production, deny all — fail closed
     if (configuredOrigins.size === 0) {
-        return true;
+        logger.error('CORS: FRONTEND_URLS is not configured in production — all origins denied');
+        return false;
     }
 
     return configuredOrigins.has(normalizedOrigin);
@@ -113,6 +176,12 @@ app.use((req, res, next) => {
     next();
 });
 
+// Rate limiters must be registered BEFORE the route handlers
+app.use('/api/auth/admin/login', loginLimiter);
+app.use('/api/auth/member/login', loginLimiter);
+app.use('/api/auth/admin/signup', signupLimiter);
+app.use('/api/auth/refresh', signupLimiter);
+
 app.use('/api/auth', authRouter);
 app.use('/api/admin/plans', planRouter);
 app.use('/api/admin/plans', paymentRouter);
@@ -128,8 +197,15 @@ app.use('/api/user', userAppRouter);
 app.use('/api/user/notifications', notificationRouter);
 app.use('/api/notifications', deviceTokenRoutes);
 app.use('/api/location', locationRouter);
-app.use('/api/debug', routeDebugRouter);
-app.use('/api/debug/notifications', simulationRouter);
+
+// Debug routes — only available in non-production environments
+if (ENV.NODE_ENV !== 'production') {
+    app.use('/api/debug', routeDebugRouter);
+    app.use('/api/debug/notifications', simulationRouter);
+    logger.warn('Debug endpoints are ENABLED (non-production mode). Disable in production.');
+} else {
+    logger.info('Debug endpoints are DISABLED (production mode).');
+}
 
 app.use(notFoundHandler);
 app.use(errorHandler);
