@@ -189,17 +189,6 @@ export const trackingController = {
 				return;
 			}
 
-			// Check rate limit
-			const rateLimit = await batchTrackingService.checkRateLimit(req.user.sub);
-			if (!rateLimit.allowed) {
-				res.status(429).json({
-					message: 'Rate limit exceeded (max 10 batches per minute)',
-					remaining: 0,
-					resetIn: rateLimit.resetIn,
-				});
-				return;
-			}
-
 			// Process batch
 			const result = await batchTrackingService.processBatch(req.user.organizationId, payload);
 
@@ -225,8 +214,8 @@ export const trackingController = {
 				duplicateCount: result.duplicateCount,
 				cacheUpdated: result.cacheUpdated,
 				rateLimit: {
-					remaining: rateLimit.remaining,
-					resetIn: rateLimit.resetIn,
+					remaining: 999,
+					resetIn: 0,
 				},
 				nextExpectedBatch: new Date(Date.now() + 15000).toISOString(),  // 15 seconds
 			});

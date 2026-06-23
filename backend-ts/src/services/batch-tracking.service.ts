@@ -31,7 +31,6 @@ export interface BatchProcessingResult {
 }
 
 const MAX_LOCATIONS_PER_BATCH = 100;
-const RATE_LIMIT_PER_MINUTE = 10;
 
 export const batchTrackingService = {
     /**
@@ -120,22 +119,7 @@ export const batchTrackingService = {
         };
     },
 
-    /**
-     * Check rate limit for driver
-     */
-    async checkRateLimit(driverId: string, limit = RATE_LIMIT_PER_MINUTE): Promise<{
-        allowed: boolean;
-        remaining: number;
-        resetIn: number;
-    }> {
-        const count = await redisService.incrementRateLimit(driverId, 60);
 
-        return {
-            allowed: count <= limit,
-            remaining: Math.max(0, limit - count),
-            resetIn: 60,
-        };
-    },
 
     /**
      * Process batch of locations
